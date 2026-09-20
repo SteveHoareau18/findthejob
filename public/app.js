@@ -168,7 +168,20 @@ document.addEventListener('DOMContentLoaded', () => {
   const manualStatusSelect = document.getElementById('manualStatusSelect');
   const manualUrlInput = document.getElementById('manualUrlInput');
 
+  // Éléments Modale de Confirmation de Postulation
+  const applyConfirmModal = document.getElementById('applyConfirmModal');
+  const closeApplyConfirmModalBtn = document.getElementById('closeApplyConfirmModalBtn');
+  const cancelApplyConfirmBtn = document.getElementById('cancelApplyConfirmBtn');
+  const justVisitOfferBtn = document.getElementById('justVisitOfferBtn');
+  const applyAndRedirectBtn = document.getElementById('applyAndRedirectBtn');
+  const applyConfirmJobTitle = document.getElementById('applyConfirmJobTitle');
+  const applyConfirmCompany = document.getElementById('applyConfirmCompany');
+  const applyConfirmLocation = document.getElementById('applyConfirmLocation');
+  const applyConfirmSource = document.getElementById('applyConfirmSource');
+  const applyConfirmDateInput = document.getElementById('applyConfirmDateInput');
+
   let currentJobs = [];
+  let pendingApplyJob = null;
   let progressInterval = null;
   let activeSourceFilter = 'all';
   let activeRelevanceFilter = 'all';
@@ -2285,6 +2298,32 @@ Pas de PHP ni de WordPress`;
     if (candCountRejected) candCountRejected.textContent = rejected;
   }
 
+  function openApplyConfirmModal(job) {
+    if (!applyConfirmModal || !job) return;
+    pendingApplyJob = job;
+    lastFocusedElement = document.activeElement;
+
+    if (applyConfirmJobTitle) applyConfirmJobTitle.textContent = job.title || 'Poste sans titre';
+    if (applyConfirmCompany) applyConfirmCompany.textContent = job.company || 'Entreprise';
+    if (applyConfirmLocation) applyConfirmLocation.textContent = job.location || 'Lieu non précisé';
+    if (applyConfirmSource) applyConfirmSource.textContent = job.source || 'FindTheJob';
+
+    const today = new Date().toISOString().split('T')[0];
+    if (applyConfirmDateInput) applyConfirmDateInput.value = today;
+
+    applyConfirmModal.classList.remove('hidden');
+    if (applyAndRedirectBtn) applyAndRedirectBtn.focus();
+  }
+
+  function closeApplyConfirmModal() {
+    if (!applyConfirmModal) return;
+    applyConfirmModal.classList.add('hidden');
+    pendingApplyJob = null;
+    if (lastFocusedElement && typeof lastFocusedElement.focus === 'function') {
+      lastFocusedElement.focus();
+    }
+  }
+
   function handleJobApplyClick(job) {
     if (!job) return;
     const isApplied = Boolean(candidatures[job.id]);
@@ -2293,40 +2332,8 @@ Pas de PHP ni de WordPress`;
       // Ouvre directement la modale de gestion focalisée sur cette offre
       openCandidaturesModal(job.id);
     } else {
-      // Marquer l'offre en Postulée avec la date du jour
-      const today = new Date().toISOString().split('T')[0];
-      const newCand = {
-        id: job.id,
-        jobId: job.id,
-        jobTitle: job.title || 'Poste sans titre',
-        company: job.company || 'Entreprise',
-        location: job.location || '',
-        url: job.url || '',
-        source: job.source || 'FindTheJob',
-        appliedAt: today,
-        status: 'En attente de réponse',
-        statusStep: '',
-        notes: '',
-        interviews: [],
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-      };
-
-      if (window.storageManager) {
-        candidatures = window.storageManager.saveCandidature(newCand);
-      } else {
-        candidatures[job.id] = newCand;
-      }
-
-      // Ouvre la fiche de poste externe dans un nouvel onglet
-      if (job.url) {
-        window.open(job.url, '_blank', 'noopener,noreferrer');
-      }
-
-      updateCandidaturesBadgeUI();
-      updateCandidatureFilterBadges();
-      applyAllFiltersAndSort();
-      showToastNotification(`Candidature pour « ${job.company} » enregistrée au ${formatDateFr(today)} !`);
+      // Affiche le pop-up d'information et de confirmation avec les 3 options
+      openApplyConfirmModal(job);
     }
   }
 
@@ -2377,8 +2384,85 @@ Pas de PHP ni de WordPress`;
     });
   }
 
+  // Événements Modale de Confirmation de Postulation
+  if (closeApplyConfirmModalBtn) {
+    closeApplyConfirmModalBtn.addEventListener('click', closeApplyConfirmModal);
+  }
+
+  if (cancelApplyConfirmBtn) {
+    cancelApplyConfirmBtn.addEventListener('click', closeApplyConfirmModal);
+  }
+
+  if (applyConfirmModal) {
+    applyConfirmModal.addEventListener('click', (e) => {
+      if (e.target === applyConfirmModal) closeApplyConfirmModal();
+    });
+  }
+
+  // Option 2 : Juste être redirigé vers l'offre (sans marquer comme postulée)
+  if (justVisitOfferBtn) {
+    justVisitOfferBtn.addEventListener('click', () => {
+      if (!pendingApplyJob) return;
+      const urlToOpen = pendingApplyJob.url;
+      closeApplyConfirmModal();
+      if (urlToOpen) {
+        window.open(urlToOpen, '_blank', 'noopener,noreferrer');
+      }
+    });
+  }
+
+  // Option 1 : Marquer comme « Postulée » avec la date choisie ET ouvrir l'offre
+  if (applyAndRedirectBtn) {
+    applyAndRedirectBtn.addEventListener('click', () => {
+      if (!pendingApplyJob) return;
+      const job = pendingApplyJob;
+      const chosenDate = (applyConfirmDateInput && applyConfirmDateInput.value)
+        ? applyConfirmDateInput.value
+        : new Date().toISOString().split('T')[0];
+
+      const newCand = {
+        id: job.id,
+        jobId: job.id,
+        jobTitle: job.title || 'Poste sans titre',
+        company: job.company || 'Entreprise',
+        location: job.location || '',
+        url: job.url || '',
+        source: job.source || 'FindTheJob',
+        appliedAt: chosenDate,
+        status: 'En attente de réponse',
+        statusStep: '',
+        notes: '',
+        interviews: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      };
+
+      if (window.storageManager) {
+        candidatures = window.storageManager.saveCandidature(newCand);
+      } else {
+        candidatures[job.id] = newCand;
+      }
+
+      const urlToOpen = job.url;
+      closeApplyConfirmModal();
+
+      if (urlToOpen) {
+        window.open(urlToOpen, '_blank', 'noopener,noreferrer');
+      }
+
+      updateCandidaturesBadgeUI();
+      updateCandidatureFilterBadges();
+      applyAllFiltersAndSort();
+      showToastNotification(`Candidature pour « ${job.company} » enregistrée au ${formatDateFr(chosenDate)} !`);
+    });
+  }
+
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
+      if (applyConfirmModal && !applyConfirmModal.classList.contains('hidden')) {
+        closeApplyConfirmModal();
+        return;
+      }
       if (manualCandModal && !manualCandModal.classList.contains('hidden')) {
         manualCandModal.classList.add('hidden');
         return;
