@@ -2008,17 +2008,65 @@ Pas de PHP ni de WordPress`;
     });
   }
 
-  // 8. Gestion de la Pop-up Modale Accessible (WCAG / RGAA)
+  // =========================================================================
+  // 8. GESTION DE LA POP-UP MODALE ACCESSIBLE (WCAG 2.2 / RGAA 4.1.2)
+  // Architecture en 3 onglets : Résumé & Tips | Argumentaire | ChatBot IA
+  // =========================================================================
+
   const jobModal = document.getElementById('jobModal');
   const modalCloseBtn = document.getElementById('modalCloseBtn');
+  let currentAnalysisJob = null;
+
+  // Éléments d'en-tête partagé
+  const modalJobTitle = document.getElementById('modalJobTitle');
+  const modalJobSourceBadge = document.getElementById('modalJobSourceBadge');
+  const modalJobCompany = document.getElementById('modalJobCompany');
+  const modalJobLocation = document.getElementById('modalJobLocation');
+  const modalJobContract = document.getElementById('modalJobContract');
+
+  // Éléments de navigation par onglets
+  const tabBtnSummary = document.getElementById('tabBtnSummary');
+  const tabBtnArgumentaire = document.getElementById('tabBtnArgumentaire');
+  const tabBtnChat = document.getElementById('tabBtnChat');
+  const panelSummary = document.getElementById('panelSummary');
+  const panelArgumentaire = document.getElementById('panelArgumentaire');
+  const panelChat = document.getElementById('panelChat');
+
+  // Onglet 1 : Résumé & Tips
   const modalLoading = document.getElementById('modalLoading');
   const modalContent = document.getElementById('modalContent');
-  let currentAnalysisJob = null;
+
+  // Onglet 2 : Argumentaire & Lettre de motivation
+  const argLoading = document.getElementById('argLoading');
+  const argContent = document.getElementById('argContent');
+  const argumentairesCache = {}; // { [jobId]: Object }
+
+  // Onglet 3 : ChatBot WebSocket
+  const chatWsStatusDot = document.getElementById('chatWsStatusDot');
+  const chatWsStatusText = document.getElementById('chatWsStatusText');
+  const clearChatBtn = document.getElementById('clearChatBtn');
+  const chatMessages = document.getElementById('chatMessages');
+  const chatQuickSuggestions = document.getElementById('chatQuickSuggestions');
+  const chatForm = document.getElementById('chatForm');
+  const chatInput = document.getElementById('chatInput');
+  const chatSendBtn = document.getElementById('chatSendBtn');
+
+  let currentModalTab = 'summary'; // 'summary' | 'argumentaire' | 'chat'
+  let chatWs = null;
+  let chatMessagesHistory = [];
+  let isStreamingChat = false;
+  let currentStreamingMsgEl = null;
+  let currentStreamingText = '';
+  let wsReconnectTimeout = null;
 
   function closeModal() {
     jobModal.classList.add('hidden');
     currentAnalysisJob = null;
     document.body.style.overflow = '';
+    if (wsReconnectTimeout) {
+      clearTimeout(wsReconnectTimeout);
+      wsReconnectTimeout = null;
+    }
     // Restitution du focus au bouton déclencheur (RGAA)
     if (lastFocusedElement) {
       lastFocusedElement.focus();
@@ -2031,7 +2079,6 @@ Pas de PHP ni de WordPress`;
   });
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-      // Si le pop-up de confirmation d'action est ouvert, ne pas fermer jobModal en arrière-plan
       if (applyConfirmModal && !applyConfirmModal.classList.contains('hidden')) {
         return;
       }
@@ -2044,13 +2091,96 @@ Pas de PHP ni de WordPress`;
     }
   });
 
+  // --- Gestion de la barre d'onglets (Accessibilité WCAG 2.2) ---
+  function switchModalTab(targetTab) {
+    currentModalTab = targetTab;
+    const tabList = [
+      { key: 'summary', btn: tabBtnSummary, panel: panelSummary },
+      { key: 'argumentaire', btn: tabBtnArgumentaire, panel: panelArgumentaire },
+      { key: 'chat', btn: tabBtnChat, panel: panelChat }
+    ];
+
+    tabList.forEach(t => {
+      if (!t.btn || !t.panel) return;
+      const isActive = t.key === targetTab;
+      t.btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+      t.btn.setAttribute('tabindex', isActive ? '0' : '-1');
+
+      if (isActive) {
+        t.btn.className = 'inline-flex items-center gap-1.5 px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-bold border-b-2 border-indigo-600 text-indigo-700 bg-white transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 whitespace-nowrap';
+        t.panel.classList.remove('hidden');
+        if (targetTab === 'chat') {
+          t.panel.classList.add('flex');
+        }
+      } else {
+        t.btn.className = 'inline-flex items-center gap-1.5 px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-semibold border-b-2 border-transparent text-slate-600 hover:text-slate-900 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 whitespace-nowrap';
+        t.panel.classList.add('hidden');
+        if (t.key === 'chat') {
+          t.panel.classList.remove('flex');
+        }
+      }
+    });
+
+    if (targetTab === 'argumentaire') {
+      ensureArgumentaireLoaded(currentAnalysisJob);
+    } else if (targetTab === 'chat') {
+      ensureChatInitialized(currentAnalysisJob);
+      setTimeout(() => {
+        chatInput?.focus();
+        scrollChatToBottom();
+      }, 50);
+    }
+  }
+
+  // Écouteurs sur les boutons d'onglets
+  if (tabBtnSummary) tabBtnSummary.addEventListener('click', () => switchModalTab('summary'));
+  if (tabBtnArgumentaire) tabBtnArgumentaire.addEventListener('click', () => switchModalTab('argumentaire'));
+  if (tabBtnChat) tabBtnChat.addEventListener('click', () => switchModalTab('chat'));
+
+  // Navigation accessible au clavier (Flèches gauche/droite) sur role="tablist"
+  const tabButtons = [tabBtnSummary, tabBtnArgumentaire, tabBtnChat].filter(Boolean);
+  tabButtons.forEach((btn, index) => {
+    btn.addEventListener('keydown', (e) => {
+      let targetIndex = null;
+      if (e.key === 'ArrowRight') {
+        targetIndex = (index + 1) % tabButtons.length;
+      } else if (e.key === 'ArrowLeft') {
+        targetIndex = (index - 1 + tabButtons.length) % tabButtons.length;
+      } else if (e.key === 'Home') {
+        targetIndex = 0;
+      } else if (e.key === 'End') {
+        targetIndex = tabButtons.length - 1;
+      }
+
+      if (targetIndex !== null) {
+        e.preventDefault();
+        tabButtons[targetIndex].focus();
+        tabButtons[targetIndex].click();
+      }
+    });
+  });
+
+  // --- Ouverture de la modale principale ---
   async function openJobAnalysisModal(job) {
     currentAnalysisJob = job;
     document.body.style.overflow = 'hidden';
+
+    // Remplissage de l'en-tête partagé
+    if (modalJobTitle) modalJobTitle.textContent = job.title || 'Offre d\'emploi';
+    if (modalJobSourceBadge) modalJobSourceBadge.textContent = job.source || 'Offre';
+    if (modalJobCompany) modalJobCompany.innerHTML = `🏢 <strong>${escapeHtml(job.company || 'Entreprise non précisée')}</strong>`;
+    if (modalJobLocation) modalJobLocation.textContent = `📍 ${job.location || 'Localisation non précisée'}`;
+    if (modalJobContract) modalJobContract.textContent = `📄 ${job.contractType || 'Contrat non précisé'}`;
+
+    // Réinitialisation de la vue sur l'onglet 1 (Résumé & Tips)
+    switchModalTab('summary');
     jobModal.classList.remove('hidden');
     modalLoading.classList.remove('hidden');
     modalContent.innerHTML = '';
     modalCloseBtn.focus();
+
+    // Réinitialisation de l'historique de chat pour cette offre
+    chatMessagesHistory = [];
 
     try {
       const res = await fetch('/api/jobs/analyze', {
@@ -2124,6 +2254,7 @@ Pas de PHP ni de WordPress`;
     }
   }
 
+  // --- Rendu Onglet 1 : Résumé & Tips ---
   function renderModalAnalysis(job, analysis) {
     const cvKeywordsHtml = (analysis.cvKeywords || [])
       .map(k => `<span class="inline-block px-2.5 py-1 rounded-md text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">${escapeHtml(k)}</span>`)
@@ -2144,23 +2275,6 @@ Pas de PHP ni de WordPress`;
     modalContent.innerHTML = `
       <div class="space-y-6">
         
-        <!-- En-tête de la modale -->
-        <div class="border-b border-slate-200 pb-4 pr-8 space-y-2">
-          <div class="flex items-center gap-2 flex-wrap">
-            <span class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-100 text-slate-700 border border-slate-200">${escapeHtml(job.source)}</span>
-            <span class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">Analyse Groq AI</span>
-          </div>
-          <h2 id="modalJobTitle" class="text-xl sm:text-2xl font-black text-slate-900 leading-tight">
-            ${escapeHtml(job.title)}
-          </h2>
-          <div class="flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-600 font-medium">
-            <span>🏢 <strong>${escapeHtml(job.company)}</strong></span>
-            <span>📍 ${escapeHtml(job.location)}</span>
-            <span>📄 ${escapeHtml(job.contractType)}</span>
-            ${job.salary && job.salary !== 'Non communiqué' ? `<span>💰 <strong class="text-slate-800">${escapeHtml(job.salary)}</strong></span>` : ''}
-          </div>
-        </div>
-
         <!-- 1. Résumé Exécutif -->
         <div class="space-y-2">
           <h3 class="text-sm font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
@@ -2271,6 +2385,588 @@ Pas de PHP ni de WordPress`;
         });
       });
     }
+  }
+
+  // =========================================================================
+  // ONGLET 2 : ARGUMENTAIRE & LETTRE DE MOTIVATION (Basé sur critères CV Groq)
+  // =========================================================================
+
+  async function ensureArgumentaireLoaded(job, forceRefresh = false) {
+    if (!job) return;
+    if (!forceRefresh && argumentairesCache[job.id]) {
+      renderArgumentaire(job, argumentairesCache[job.id], true);
+      return;
+    }
+
+    argLoading.classList.remove('hidden');
+    argContent.innerHTML = '';
+
+    try {
+      const res = await fetch('/api/jobs/argumentaire', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          job,
+          cvCriteria: currentCvCriteria || null
+        })
+      });
+
+      const data = await res.json();
+      argLoading.classList.add('hidden');
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Erreur lors de la génération de l\'argumentaire');
+      }
+
+      argumentairesCache[job.id] = data.argumentaire;
+      renderArgumentaire(job, data.argumentaire, data.isAiPowered);
+    } catch (err) {
+      console.error('Erreur chargement argumentaire:', err);
+      argLoading.classList.add('hidden');
+      argContent.innerHTML = `
+        <div class="text-center py-8 space-y-4">
+          <div class="text-3xl" aria-hidden="true">⚠️</div>
+          <h3 class="text-lg font-bold text-rose-700">Impossible de générer l'argumentaire</h3>
+          <p class="text-sm text-slate-600">${escapeHtml(err.message)}</p>
+          <button type="button" id="retryArgBtn" class="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-sm">
+            <span>🔄 Réessayer</span>
+          </button>
+        </div>
+      `;
+      document.getElementById('retryArgBtn')?.addEventListener('click', () => ensureArgumentaireLoaded(job, true));
+    }
+  }
+
+  function renderArgumentaire(job, arg, isAiPowered = true) {
+    const hasCvCriteria = Boolean(currentCvCriteria && (
+      (currentCvCriteria.logiciels && currentCvCriteria.logiciels.length) ||
+      (currentCvCriteria.experience && currentCvCriteria.experience.length) ||
+      (currentCvCriteria.formations && currentCvCriteria.formations.length)
+    ));
+
+    const argumentsCardsHtml = (arg.argumentsCles || []).map((a, idx) => `
+      <div class="p-4 rounded-xl border border-slate-200 bg-white hover:border-indigo-300 shadow-sm transition-all space-y-2.5">
+        <div class="flex items-center gap-2">
+          <span class="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 text-xs font-extrabold flex items-center justify-center shrink-0">${idx + 1}</span>
+          <h4 class="text-sm font-bold text-slate-900">${escapeHtml(a.titre || 'Argument clé')}</h4>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+          <div class="p-2.5 rounded-lg bg-amber-50/70 border border-amber-200/80">
+            <span class="font-bold text-amber-900 block mb-0.5">Besoin de l'offre :</span>
+            <span class="text-amber-800">${escapeHtml(a.pointOffre || '')}</span>
+          </div>
+          <div class="p-2.5 rounded-lg bg-emerald-50/70 border border-emerald-200/80">
+            <span class="font-bold text-emerald-900 block mb-0.5">Votre atout CV :</span>
+            <span class="text-emerald-800">${escapeHtml(a.atoutCandidat || '')}</span>
+          </div>
+        </div>
+        <p class="text-xs sm:text-sm text-slate-700 leading-relaxed pt-1">
+          ${escapeHtml(a.argumentation || '')}
+        </p>
+      </div>
+    `).join('');
+
+    const diffHtml = (arg.differentiateurs || []).map(d => `
+      <li class="flex items-start gap-2 text-xs sm:text-sm text-slate-700">
+        <span class="text-purple-600 font-bold leading-none mt-0.5">✨</span>
+        <span>${escapeHtml(d)}</span>
+      </li>
+    `).join('');
+
+    argContent.innerHTML = `
+      <div class="space-y-6">
+
+        <!-- Bandeau source des critères du candidat -->
+        <div class="p-4 rounded-xl border ${hasCvCriteria ? 'bg-purple-50/50 border-purple-200' : 'bg-amber-50 border-amber-200'} flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div class="space-y-1">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="px-2.5 py-0.5 rounded-full text-xs font-bold ${hasCvCriteria ? 'bg-purple-100 text-purple-800 border border-purple-300' : 'bg-amber-100 text-amber-800 border border-amber-300'} flex items-center gap-1">
+                <span>${hasCvCriteria ? '✨ Profil adapté par Groq AI' : '⚠️ Critères CV non configurés'}</span>
+              </span>
+              <span class="text-xs text-slate-600">
+                ${hasCvCriteria ? 'Généré à partir de vos critères extraits sans ré-envoi du CV brut' : 'Modèle généraliste'}
+              </span>
+            </div>
+            <p class="text-xs text-slate-600">
+              ${hasCvCriteria ? 'Vous pouvez ajuster vos critères pour recalculer instantanément l\'argumentaire.' : 'Ajoutez votre CV ou renseignez vos critères pour obtenir un argumentaire ultra-personnalisé.'}
+            </p>
+          </div>
+          <button
+            type="button"
+            id="argOpenCvModalBtn"
+            class="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white text-indigo-700 border border-indigo-200 hover:bg-indigo-50 shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          >
+            <span>✏️ Modifier les critères CV</span>
+          </button>
+        </div>
+
+        <!-- 1. Phrase d'accroche pour la candidature -->
+        <div class="space-y-2">
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+              <span>🎯</span> Phrase d'accroche percutante
+            </h3>
+            <button
+              type="button"
+              id="copyArgAccrocheBtn"
+              class="text-xs text-indigo-600 hover:text-indigo-800 font-bold focus:outline-none"
+            >
+              📋 Copier
+            </button>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-800 leading-relaxed font-medium">
+            <span id="argAccrocheText">${escapeHtml(arg.accroche || '')}</span>
+          </div>
+        </div>
+
+        <!-- 2. Les 3 arguments massues -->
+        <div class="space-y-3">
+          <h3 class="text-sm font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+            <span>⚔️</span> Arguments Massues (Miroir Offre ⟷ Candidat)
+          </h3>
+          <div class="space-y-3">
+            ${argumentsCardsHtml}
+          </div>
+        </div>
+
+        <!-- 3. Atouts différenciateurs -->
+        ${diffHtml ? `
+        <div class="space-y-2">
+          <h3 class="text-sm font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+            <span>💎</span> Vos Différenciateurs & Valeur Ajoutée
+          </h3>
+          <ul class="p-4 rounded-xl bg-purple-50/30 border border-purple-100 space-y-2">
+            ${diffHtml}
+          </ul>
+        </div>` : ''}
+
+        <!-- 4. Modèle intégral de Lettre de Motivation -->
+        <div class="space-y-2">
+          <div class="flex items-center justify-between flex-wrap gap-2">
+            <h3 class="text-sm font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+              <span>✉️</span> Modèle de Lettre de Motivation Rédigée
+            </h3>
+            <button
+              type="button"
+              id="copyFullLetterBtn"
+              class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <span>📋 Copier la lettre entière</span>
+            </button>
+          </div>
+          <div class="relative p-5 rounded-xl bg-slate-50 border border-slate-300 text-xs sm:text-sm text-slate-800 leading-relaxed font-sans whitespace-pre-line shadow-inner max-h-96 overflow-y-auto">
+            <div id="fullLetterContent">${escapeHtml(arg.modeleLettre || '')}</div>
+          </div>
+        </div>
+
+        <!-- Pied de panneau -->
+        <div class="pt-4 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <span class="text-xs text-slate-500">
+            Généré par Groq AI • Llama 3.3 Versatile
+          </span>
+          <button
+            type="button"
+            id="regenArgBtn"
+            class="text-xs font-bold text-indigo-700 hover:text-indigo-900 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-indigo-200 bg-white hover:bg-indigo-50 transition-colors"
+          >
+            <span>🔄 Régénérer l'argumentaire</span>
+          </button>
+        </div>
+
+      </div>
+    `;
+
+    // Événements boutons de copie et liens
+    document.getElementById('argOpenCvModalBtn')?.addEventListener('click', () => {
+      openCvCriteriaModalFunc();
+    });
+
+    document.getElementById('copyArgAccrocheBtn')?.addEventListener('click', () => {
+      const text = document.getElementById('argAccrocheText')?.textContent || '';
+      navigator.clipboard.writeText(text).then(() => {
+        const btn = document.getElementById('copyArgAccrocheBtn');
+        if (btn) btn.textContent = '✅ Copiée !';
+        setTimeout(() => { if (btn) btn.textContent = '📋 Copier'; }, 2000);
+      });
+    });
+
+    document.getElementById('copyFullLetterBtn')?.addEventListener('click', () => {
+      const text = document.getElementById('fullLetterContent')?.textContent || '';
+      navigator.clipboard.writeText(text).then(() => {
+        const btn = document.getElementById('copyFullLetterBtn');
+        if (btn) {
+          btn.innerHTML = '<span>✅ Lettre copiée dans le presse-papier !</span>';
+          btn.classList.add('bg-emerald-600');
+          setTimeout(() => {
+            btn.innerHTML = '<span>📋 Copier la lettre entière</span>';
+            btn.classList.remove('bg-emerald-600');
+          }, 3000);
+        }
+      });
+    });
+
+    document.getElementById('regenArgBtn')?.addEventListener('click', () => {
+      ensureArgumentaireLoaded(job, true);
+    });
+  }
+
+  // =========================================================================
+  // ONGLET 3 : CHATBOT RECRUTEMENT GROQ AI VIA WEBSOCKET (Temps Réel 2026)
+  // =========================================================================
+
+  function getWebSocketUrl() {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${protocol}//${window.location.host}/ws/chat`;
+  }
+
+  function updateChatWsStatus(isOnline, text) {
+    if (chatWsStatusDot) {
+      chatWsStatusDot.className = `w-2.5 h-2.5 rounded-full ${isOnline ? 'bg-emerald-500' : 'bg-amber-500'}`;
+    }
+    if (chatWsStatusText) {
+      chatWsStatusText.textContent = text;
+    }
+  }
+
+  function initChatWebSocket() {
+    if (chatWs && (chatWs.readyState === WebSocket.OPEN || chatWs.readyState === WebSocket.CONNECTING)) {
+      return;
+    }
+
+    try {
+      chatWs = new WebSocket(getWebSocketUrl());
+
+      chatWs.onopen = () => {
+        updateChatWsStatus(true, 'Coach Groq connecté en direct');
+      };
+
+      chatWs.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          handleChatWsMessage(data);
+        } catch (err) {
+          console.error('[ChatWS] Erreur parsing message serveur :', err);
+        }
+      };
+
+      chatWs.onerror = (err) => {
+        console.warn('[ChatWS] Erreur WebSocket :', err);
+        updateChatWsStatus(false, 'Connexion instable');
+      };
+
+      chatWs.onclose = () => {
+        updateChatWsStatus(false, 'Déconnecté (reconnexion automatique...)');
+        if (jobModal && !jobModal.classList.contains('hidden')) {
+          clearTimeout(wsReconnectTimeout);
+          wsReconnectTimeout = setTimeout(initChatWebSocket, 3000);
+        }
+      };
+    } catch (e) {
+      console.warn('[ChatWS] Impossible d\'initialiser WebSocket:', e);
+      updateChatWsStatus(false, 'Mode hors-ligne');
+    }
+  }
+
+  function ensureChatInitialized(job) {
+    initChatWebSocket();
+    if (chatMessagesHistory.length === 0) {
+      resetChatToWelcome(job);
+    }
+  }
+
+  function resetChatToWelcome(job) {
+    chatMessagesHistory = [];
+    if (!chatMessages) return;
+
+    const hasCriteria = Boolean(currentCvCriteria && currentCvCriteria.formations);
+    const welcomeHtml = `
+      <div class="mr-auto bg-white text-slate-800 border border-slate-200 p-4 max-w-[85%] space-y-2 rounded-2xl rounded-tl-xs shadow-xs">
+        <div class="flex items-center gap-2 mb-1">
+          <span class="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs font-bold flex items-center justify-center">✨</span>
+          <span class="text-xs font-bold text-slate-900">Coach Recrutement Groq AI</span>
+          <span class="text-[10px] text-slate-400 font-medium">Maintenant</span>
+        </div>
+        <div class="text-xs sm:text-sm text-slate-700 leading-relaxed space-y-2">
+          <p>Bonjour ! Je suis votre coach carrière dédié pour le poste de <strong>${escapeHtml(job?.title || 'ce poste')}</strong> chez <strong>${escapeHtml(job?.company || 'cette entreprise')}</strong>.</p>
+          <p class="text-xs text-slate-500">
+            ${hasCriteria ? '✅ Vos critères CV sont chargés : je personnaliserai toutes mes réponses selon votre profil.' : '💡 Astuce : vos critères de CV enrichissent mes réponses. Vous pouvez aussi poser vos questions directement ci-dessous.'}
+          </p>
+          <p>Comment puis-je vous aider à maximiser vos chances aujourd\'hui ?</p>
+        </div>
+      </div>
+    `;
+    chatMessages.innerHTML = welcomeHtml;
+    scrollChatToBottom();
+  }
+
+  function renderMarkdownView(text) {
+    if (!text) return '';
+
+    // 1. Échappement anti-XSS strict
+    let safe = text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+
+    // 2. Extraction sécurisée des blocs de code multi-lignes ```lang ... ```
+    const codeBlocks = [];
+    safe = safe.replace(/```([a-zA-Z0-9_\-\.]*)\n?([\s\S]*?)```/g, (match, lang, code) => {
+      const id = `__CODE_BLOCK_${codeBlocks.length}__`;
+      codeBlocks.push(`<pre class="my-2 p-3 rounded-xl bg-slate-900 text-slate-100 font-mono text-xs overflow-x-auto leading-relaxed border border-slate-800"><code>${code.trim()}</code></pre>`);
+      return id;
+    });
+
+    // 3. Code inline `...`
+    safe = safe.replace(/`([^`\n]+)`/g, '<code class="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono text-xs text-indigo-700 font-semibold">$1</code>');
+
+    // 4. Mises en valeur : gras et italique
+    safe = safe.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    safe = safe.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+    safe = safe.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
+    safe = safe.replace(/_([^_\n]+)_/g, '<em>$1</em>');
+
+    // 5. Analyse par ligne (Titres, Listes, Citations, Paragraphes)
+    const lines = safe.split('\n');
+    let html = '';
+    let currentListType = null; // 'ul' | 'ol' | null
+
+    function closeList() {
+      if (currentListType === 'ul') {
+        html += '</ul>';
+        currentListType = null;
+      } else if (currentListType === 'ol') {
+        html += '</ol>';
+        currentListType = null;
+      }
+    }
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+
+      // Placeholder de bloc de code
+      if (line.startsWith('__CODE_BLOCK_') && line.endsWith('__')) {
+        closeList();
+        html += line;
+        continue;
+      }
+
+      // Ligne vide
+      if (line === '') {
+        closeList();
+        continue;
+      }
+
+      // Titres H4
+      if (line.startsWith('#### ')) {
+        closeList();
+        html += `<h4 class="text-xs font-black text-slate-800 uppercase tracking-wide mt-3 mb-1.5">${line.substring(5)}</h4>`;
+        continue;
+      }
+
+      // Titres H3
+      if (line.startsWith('### ')) {
+        closeList();
+        html += `<h3 class="text-sm font-extrabold text-slate-900 mt-3.5 mb-1.5 flex items-center gap-1.5">${line.substring(4)}</h3>`;
+        continue;
+      }
+
+      // Titres H1 ou H2
+      if (line.startsWith('## ') || line.startsWith('# ')) {
+        closeList();
+        const cleanTitle = line.replace(/^#+\s*/, '');
+        html += `<h3 class="text-sm sm:text-base font-extrabold text-indigo-950 mt-4 mb-2 flex items-center gap-1.5">${cleanTitle}</h3>`;
+        continue;
+      }
+
+      // Citations (> ...)
+      if (line.startsWith('&gt; ') || line.startsWith('> ')) {
+        closeList();
+        const quoteText = line.replace(/^(&gt;|>)\s*/, '');
+        html += `<blockquote class="border-l-4 border-indigo-500 bg-indigo-50/50 pl-3.5 pr-2 py-1.5 my-2 text-xs sm:text-sm text-slate-700 italic rounded-r-lg">${quoteText}</blockquote>`;
+        continue;
+      }
+
+      // Listes numérotées (1. ..., 2. ...)
+      const olMatch = line.match(/^(\d+)\.\s+(.*)/);
+      if (olMatch) {
+        if (currentListType !== 'ol') {
+          closeList();
+          html += '<ol class="list-decimal ml-5 space-y-1.5 my-2 text-xs sm:text-sm text-slate-800 leading-relaxed font-medium">';
+          currentListType = 'ol';
+        }
+        html += `<li>${olMatch[2]}</li>`;
+        continue;
+      }
+
+      // Listes à puces (- ..., * ..., • ...)
+      const ulMatch = line.match(/^[-*•]\s+(.*)/);
+      if (ulMatch) {
+        if (currentListType !== 'ul') {
+          closeList();
+          html += '<ul class="list-disc ml-5 space-y-1 my-2 text-xs sm:text-sm text-slate-800 leading-relaxed">';
+          currentListType = 'ul';
+        }
+        html += `<li>${ulMatch[1]}</li>`;
+        continue;
+      }
+
+      // Paragraphe standard
+      closeList();
+      html += `<p class="my-1.5 text-xs sm:text-sm text-slate-800 leading-relaxed">${line}</p>`;
+    }
+
+    closeList();
+
+    // Restitution des blocs de code
+    codeBlocks.forEach((codeBlockHtml, idx) => {
+      html = html.replace(`__CODE_BLOCK_${idx}__`, codeBlockHtml);
+    });
+
+    return html;
+  }
+
+  function appendChatMessage(role, text, isStreaming = false) {
+    if (!chatMessages) return null;
+
+    const wrapper = document.createElement('div');
+    if (role === 'user') {
+      wrapper.className = 'ml-auto bg-gradient-to-r from-indigo-600 to-indigo-700 text-white p-3.5 max-w-[85%] text-xs sm:text-sm leading-relaxed rounded-2xl rounded-tr-xs shadow-sm';
+      wrapper.textContent = text;
+    } else {
+      wrapper.className = 'mr-auto bg-white text-slate-800 border border-slate-200 p-4 max-w-[85%] space-y-2 rounded-2xl rounded-tl-xs shadow-xs';
+      wrapper.innerHTML = `
+        <div class="flex items-center gap-2 mb-1">
+          <span class="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs font-bold flex items-center justify-center">✨</span>
+          <span class="text-xs font-bold text-slate-900">Coach Recrutement</span>
+          <span class="text-[10px] text-slate-400 font-medium">En direct</span>
+        </div>
+        <div class="text-xs sm:text-sm text-slate-700 leading-relaxed chat-msg-content">
+          ${renderMarkdownView(text)}${isStreaming ? '<span class="inline-block w-1.5 h-3.5 ml-0.5 bg-indigo-600 animate-pulse align-middle" aria-hidden="true"></span>' : ''}
+        </div>
+      `;
+    }
+
+    chatMessages.appendChild(wrapper);
+    scrollChatToBottom();
+    return wrapper;
+  }
+
+  function scrollChatToBottom() {
+    if (chatMessages) {
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+  }
+
+  function setChatInputState(disabled) {
+    if (chatInput) chatInput.disabled = disabled;
+    if (chatSendBtn) chatSendBtn.disabled = disabled;
+    isStreamingChat = disabled;
+  }
+
+  function sendChatMessage(text) {
+    if (!text || !text.trim() || isStreamingChat) return;
+    const cleanText = text.trim();
+
+    appendChatMessage('user', cleanText);
+    chatMessagesHistory.push({ role: 'user', content: cleanText });
+
+    if (chatInput) chatInput.value = '';
+
+    currentStreamingText = '';
+    isStreamingChat = true;
+    currentStreamingMsgEl = appendChatMessage('assistant', '', true);
+    setChatInputState(true);
+
+    const payload = {
+      type: 'chat_message',
+      job: currentAnalysisJob,
+      cvCriteria: currentCvCriteria || null,
+      messages: chatMessagesHistory
+    };
+
+    if (chatWs && chatWs.readyState === WebSocket.OPEN) {
+      chatWs.send(JSON.stringify(payload));
+    } else {
+      initChatWebSocket();
+      setTimeout(() => {
+        if (chatWs && chatWs.readyState === WebSocket.OPEN) {
+          chatWs.send(JSON.stringify(payload));
+        } else {
+          finishStreaming("Désolé, la connexion au serveur est interrompue. Veuillez réessayer.");
+        }
+      }, 600);
+    }
+  }
+
+  function handleChatWsMessage(data) {
+    if (!data || !data.type) return;
+
+    if (data.type === 'start') {
+      currentStreamingText = '';
+    } else if (data.type === 'chunk') {
+      currentStreamingText += (data.delta || '');
+      if (currentStreamingMsgEl) {
+        const contentEl = currentStreamingMsgEl.querySelector('.chat-msg-content');
+        if (contentEl) {
+          contentEl.innerHTML = renderMarkdownView(currentStreamingText) + '<span class="inline-block w-1.5 h-3.5 ml-0.5 bg-indigo-600 animate-pulse align-middle" aria-hidden="true"></span>';
+        }
+        scrollChatToBottom();
+      }
+    } else if (data.type === 'done') {
+      finishStreaming(data.fullText || currentStreamingText);
+    } else if (data.type === 'error') {
+      finishStreaming("⚠️ Erreur : " + (data.error || 'Une erreur est survenue lors de la réponse de Groq.'));
+    }
+  }
+
+  function finishStreaming(finalText) {
+    if (currentStreamingMsgEl) {
+      const contentEl = currentStreamingMsgEl.querySelector('.chat-msg-content');
+      if (contentEl) {
+        contentEl.innerHTML = renderMarkdownView(finalText);
+      }
+    }
+    chatMessagesHistory.push({ role: 'assistant', content: finalText });
+    setChatInputState(false);
+    currentStreamingMsgEl = null;
+    currentStreamingText = '';
+    scrollChatToBottom();
+    chatInput?.focus();
+  }
+
+  // Événements de soumission du chat
+  if (chatForm) {
+    chatForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      sendChatMessage(chatInput.value);
+    });
+  }
+
+  if (chatInput) {
+    chatInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendChatMessage(chatInput.value);
+      }
+    });
+  }
+
+  // Pilules de suggestions cliquables
+  if (chatQuickSuggestions) {
+    chatQuickSuggestions.querySelectorAll('.chat-suggest-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const text = btn.textContent.replace(/^[^\wÀ-ÿ]+/, '').trim();
+        sendChatMessage(text);
+      });
+    });
+  }
+
+  // Bouton de réinitialisation du chat
+  if (clearChatBtn) {
+    clearChatBtn.addEventListener('click', () => {
+      resetChatToWelcome(currentAnalysisJob);
+      chatInput?.focus();
+    });
   }
 
   // =========================================================================

@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <!-- Background Gradient: Indigo to Violet -->
+    <linearGradient id="ftj-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4F46E5"/>
+      <stop offset="100%" stop-color="#7C3AED"/>
+    </linearGradient>
+
+    <!-- Amber Accent Gradient for Search Lens -->
+    <linearGradient id="ftj-amber" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FBBF24"/>
+      <stop offset="100%" stop-color="#F59E0B"/>
+    </linearGradient>
+
+    <!-- Subtle Drop Shadow for Briefcase -->
+    <filter id="ftj-shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#1E1B4B" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <!-- Base Squircle -->
+  <rect width="64" height="64" rx="16" fill="url(#ftj-bg)"/>
+  
+  <!-- Subtle Inner Border Highlight -->
+  <rect x="1" y="1" width="62" height="62" rx="15" stroke="#FFFFFF" stroke-opacity="0.2" stroke-width="1.5" fill="none"/>
+
+  <!-- Briefcase Element -->
+  <g filter="url(#ftj-shadow)">
+    <!-- Briefcase Handle -->
+    <path d="M25 23V18C25 15.79 26.79 14 29 14H35C37.21 14 39 15.79 39 18V23" stroke="#FFFFFF" stroke-width="3.5" stroke-linecap="round"/>
+    
+    <!-- Briefcase Main Body -->
+    <rect x="12" y="22" width="40" height="28" rx="6" fill="#FFFFFF"/>
+    
+    <!-- Briefcase Flap Divider -->
+    <path d="M12 32H52" stroke="#E0E7FF" stroke-width="2"/>
+    
+    <!-- Subtle Straps -->
+    <rect x="18" y="22" width="3" height="28" fill="#F1F5F9"/>
+    <rect x="43" y="22" width="3" height="28" fill="#F1F5F9"/>
+  </g>
+
+  <!-- Search Loupe (Finder) & AI Core -->
+  <g>
+    <!-- Loupe Handle (Angled at 45°) -->
+    <path d="M38.5 39.5L47.5 48.5" stroke="url(#ftj-amber)" stroke-width="4" stroke-linecap="round"/>
+    <path d="M39.5 40.5L46.5 47.5" stroke="#FDE68A" stroke-width="1.5" stroke-linecap="round"/>
+
+    <!-- Lens Glass Background -->
+    <circle cx="32" cy="33" r="9.5" fill="#1E1B4B"/>
+
+    <!-- Lens Rim in Amber -->
+    <circle cx="32" cy="33" r="9.5" stroke="url(#ftj-amber)" stroke-width="3" fill="none"/>
+
+    <!-- Inner Glow Ring -->
+    <circle cx="32" cy="33" r="7.5" stroke="#4F46E5" stroke-width="0.75" stroke-opacity="0.6" fill="none"/>
+
+    <!-- 4-Point AI Sparkle / Target Center -->
+    <path d="M32 28C32 30.2 33.2 31.8 35.5 33C33.2 34.2 32 35.8 32 38C32 35.8 30.8 34.2 28.5 33C30.8 31.8 32 30.2 32 28Z" fill="#FDE68A"/>
+    
+    <!-- Sparkle Bright Core -->
+    <circle cx="32" cy="33" r="1" fill="#FFFFFF"/>
+  </g>
+</svg>

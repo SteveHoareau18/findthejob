@@ -323,7 +323,7 @@ docker compose up -d --build
 - [x] Gestionnaire de candidatures avec vue calendrier et export `.ics`.
 - [x] Export et import d'archives ZIP 100% en mémoire.
 - [ ] Connecteur direct OAuth 2.0 pour l'API partenaire officielle France Travail.
-- [ ] Générateur de lettres de motivation personnalisées adaptées à chaque offre via Groq.
+- [x] Générateur de lettres de motivation personnalisées adaptées à chaque offre via Groq.
 - [ ] Mode PWA (Progressive Web App) pour consultation et gestion des alertes hors-ligne.
 
 ---

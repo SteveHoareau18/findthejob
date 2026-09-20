@@ -1,4 +1,5 @@
 const express = require('express');
+const http = require('http');
 const cors = require('cors');
 const path = require('path');
 require('dotenv').config();
@@ -6,6 +7,8 @@ require('dotenv').config();
 const { parseUserQueryAndExclusions, filterAndScoreJobs, getGroqClient } = require('./src/groqService');
 const { analyzeJobAndGetTips } = require('./src/jobAnalysisService');
 const { adaptCvCriteriaWithGroq, scoreJobsWithCvGroq } = require('./src/cvGroqService');
+const { handleGenerateArgumentaire } = require('./src/controllers/argumentaireController');
+const { initChatWebSocketServer } = require('./src/websocket/chatWebSocketHandler');
 const { scrapeJobs } = require('./scrap');
 
 const app = express();
@@ -145,6 +148,13 @@ app.post('/api/jobs/analyze', async (req, res) => {
 });
 
 /**
+ * Route POST /api/jobs/argumentaire
+ * Génère un argumentaire stratégique et une lettre de motivation personnalisée
+ * basés sur les critères du candidat et les données de l'offre
+ */
+app.post('/api/jobs/argumentaire', handleGenerateArgumentaire);
+
+/**
  * Route POST /api/cv/adapt-groq
  * Analyse sémantique du CV et adaptation structurée des critères par l'IA Groq
  */
@@ -202,9 +212,13 @@ app.post('/api/cv/score-jobs', async (req, res) => {
   }
 });
 
-// Démarrage du serveur
-app.listen(PORT, () => {
+// Démarrage du serveur HTTP & WebSocket (2026)
+const server = http.createServer(app);
+initChatWebSocketServer(server);
+
+server.listen(PORT, () => {
   console.log(`\n🚀 Serveur FindTheJob démarré avec succès !`);
   console.log(`👉 Ouvrez votre navigateur sur: http://localhost:${PORT}`);
-  console.log(`🤖 Groq IA: ${getGroqClient() ? 'Activé (Clé valide)' : 'Mode Heuristique (Clé manquante dans .env)'}\n`);
+  console.log(`🤖 Groq IA: ${getGroqClient() ? 'Activé (Clé valide)' : 'Mode Heuristique (Clé manquante dans .env)'}`);
+  console.log(`💬 WebSocket Chatbot: ws://localhost:${PORT}/ws/chat\n`);
 });
