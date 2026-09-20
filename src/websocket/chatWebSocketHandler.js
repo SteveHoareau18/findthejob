@@ -13,13 +13,30 @@ const { streamChatConversation } = require('../services/chatService');
  */
 function initChatWebSocketServer(httpServer) {
   const wss = new WebSocketServer({
-    server: httpServer,
-    path: '/ws/chat',
-    // Limite de taille de payload pour sécurité (1MB)
+    noServer: true,
     maxPayload: 1024 * 1024
   });
 
-  console.log('[WebSocket] Serveur WebSocket initialisé sur /ws/chat');
+  console.log('[WebSocket] Serveur WebSocket initialisé (gestion dynamique des upgrades HTTP)');
+
+  // Écoute de l'événement 'upgrade' pour intercepter la négociation WebSocket
+  httpServer.on('upgrade', (req, socket, head) => {
+    const pathname = (req.url || '').split('?')[0];
+
+    // Accepte les requêtes directes (/ws/chat) ainsi que les routes réécrites par Vercel
+    if (
+      pathname === '/ws/chat' ||
+      pathname.startsWith('/ws') ||
+      pathname.startsWith('/api') ||
+      pathname === '/'
+    ) {
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        wss.emit('connection', ws, req);
+      });
+    } else {
+      socket.destroy();
+    }
+  });
 
   // Heartbeat keep-alive (30 secondes)
   const heartbeatInterval = setInterval(() => {
@@ -32,6 +49,11 @@ function initChatWebSocketServer(httpServer) {
       ws.ping();
     });
   }, 30000);
+
+  // Évite d'empêcher l'arrêt ou la suspension du processus en environnement serverless
+  if (typeof heartbeatInterval.unref === 'function') {
+    heartbeatInterval.unref();
+  }
 
   wss.on('close', () => {
     clearInterval(heartbeatInterval);

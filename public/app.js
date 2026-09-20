@@ -2509,6 +2509,7 @@ Pas de PHP ni de WordPress`;
   let currentStreamingMsgEl = null;
   let currentStreamingText = '';
   let wsReconnectTimeout = null;
+  let wsReconnectDelay = 1000;
 
   function closeModal() {
     jobModal.classList.add('hidden');
@@ -2518,6 +2519,7 @@ Pas de PHP ni de WordPress`;
       clearTimeout(wsReconnectTimeout);
       wsReconnectTimeout = null;
     }
+    wsReconnectDelay = 1000;
     // Restitution du focus au bouton déclencheur (RGAA)
     if (lastFocusedElement) {
       lastFocusedElement.focus();
@@ -3135,6 +3137,7 @@ Pas de PHP ni de WordPress`;
       chatWs = new WebSocket(getWebSocketUrl());
 
       chatWs.onopen = () => {
+        wsReconnectDelay = 1000;
         updateChatWsStatus(true, 'Coach Groq connecté en direct');
       };
 
@@ -3156,7 +3159,8 @@ Pas de PHP ni de WordPress`;
         updateChatWsStatus(false, 'Déconnecté (reconnexion automatique...)');
         if (jobModal && !jobModal.classList.contains('hidden')) {
           clearTimeout(wsReconnectTimeout);
-          wsReconnectTimeout = setTimeout(initChatWebSocket, 3000);
+          wsReconnectTimeout = setTimeout(initChatWebSocket, wsReconnectDelay);
+          wsReconnectDelay = Math.min(wsReconnectDelay * 1.5, 10000);
         }
       };
     } catch (e) {
@@ -3386,13 +3390,17 @@ Pas de PHP ni de WordPress`;
       chatWs.send(JSON.stringify(payload));
     } else {
       initChatWebSocket();
-      setTimeout(() => {
+      let attempts = 0;
+      const sendInterval = setInterval(() => {
+        attempts++;
         if (chatWs && chatWs.readyState === WebSocket.OPEN) {
+          clearInterval(sendInterval);
           chatWs.send(JSON.stringify(payload));
-        } else {
-          finishStreaming("Désolé, la connexion au serveur est interrompue. Veuillez réessayer.");
+        } else if (attempts >= 10) {
+          clearInterval(sendInterval);
+          finishStreaming("Désolé, la connexion au serveur est indisponible. Veuillez réessayer.");
         }
-      }, 600);
+      }, 300);
     }
   }
 

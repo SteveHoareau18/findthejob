@@ -384,9 +384,14 @@ app.post('/api/push/subscribe', (req, res) => {
 const server = http.createServer(app);
 initChatWebSocketServer(server);
 
-server.listen(PORT, () => {
-  console.log(`\n🚀 Serveur FindTheJob démarré avec succès !`);
-  console.log(`👉 Ouvrez votre navigateur sur: http://localhost:${PORT}`);
-  console.log(`🤖 Groq IA: ${getGroqClient() ? 'Activé (Clé valide)' : 'Mode Heuristique (Clé manquante dans .env)'}`);
-  console.log(`💬 WebSocket Chatbot: ws://localhost:${PORT}/ws/chat\n`);
-});
+// Écoute locale uniquement (sur Vercel, l'environnement Serverless gère le port et l'écoute)
+if (!process.env.VERCEL) {
+  server.listen(PORT, () => {
+    console.log(`\n🚀 Serveur FindTheJob démarré avec succès !`);
+    console.log(`👉 Ouvrez votre navigateur sur: http://localhost:${PORT}`);
+    console.log(`🤖 Groq IA: ${getGroqClient() ? 'Activé (Clé valide)' : 'Mode Heuristique (Clé manquante dans .env)'}`);
+    console.log(`💬 WebSocket Chatbot: ws://localhost:${PORT}/ws/chat\n`);
+  });
+}
+
+module.exports = server;
