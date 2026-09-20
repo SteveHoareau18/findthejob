@@ -158,6 +158,8 @@ function isInvalidExpLine(str) {
   const s = str.trim().toLowerCase();
   if (/^(objectif|profil|me contacter|centre d|compétences|soft skills|anglais|site web|e-mail|numéro)/i.test(s)) return true;
   if (/\b(mon objectif|je souhaite|cherche un|recherche un|devenir|passionné)\b/i.test(s)) return true;
+  // Préserver expressément les contrats d'alternance, apprentissages et stages en entreprise
+  if (/\b(alternan|apprenti|stage|stagiaire|chez\b|poste\b|mission)\b/i.test(s)) return false;
   if (/\b(brevet|baccalauréat|bac\s*\+[0-9]|bac\s*(?:si|s|es|l|pro)|licence|master|bts|dut|but|diplôme|diplômé|rncp)\b/i.test(s)) return true;
   if (/^(responsable|autonome|rigoureux|rigoureuse|curieux|dynamique)$/i.test(s)) return true;
   return false;
@@ -399,10 +401,12 @@ function createEmptyCriteria() {
 
 /**
  * 5. Calculateur d'adéquation CV / Offre (Score 0-100% sans IA)
- * Compare les critères extraits du CV aux détails de chaque offre.
+/**
+ * 5. Calculateur d'adéquation CV / Offre (Score déterministe local / Fallback sans IA)
+ * 100% générique : valorise les formations, l'alternance et résout les libellés composés.
  */
 function calculateCvJobScore(job, cvCriteria) {
-  if (!cvCriteria || (!cvCriteria.logiciels?.length && !cvCriteria.experience?.length)) {
+  if (!cvCriteria || (!cvCriteria.logiciels?.length && !cvCriteria.experience?.length && !cvCriteria.formations?.length)) {
     return { score: null, matchDetails: 'Aucun CV importé', matchedLogiciels: [] };
   }
 
@@ -410,45 +414,89 @@ function calculateCvJobScore(job, cvCriteria) {
   const matchPoints = [];
   const matchedLogiciels = [];
 
-  const jobText = `${job.title} ${job.company} ${job.description} ${(job.tags || []).join(' ')}`.toLowerCase();
+  const jobText = `${job.title || ''} ${job.company || ''} ${job.description || ''} ${(job.tags || []).join(' ')}`.toLowerCase();
+  const jobTitleLower = (job.title || '').toLowerCase();
 
-  // 1. Logiciels & Compétences Techniques (Pondération max: 45 pts)
+  // 1. Logiciels & Compétences Techniques (Pondération max: 40 pts)
   const cvLogiciels = cvCriteria.logiciels || [];
   if (cvLogiciels.length > 0) {
     cvLogiciels.forEach(tech => {
-      const escaped = tech.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const regex = tech.length <= 2
-        ? new RegExp(`(^|[^a-zA-Z0-9_#+])${escaped}([^a-zA-Z0-9_#+]|$)`)
-        : new RegExp(`(^|[^a-zA-Z0-9_#+])${escaped}([^a-zA-Z0-9_#+]|$)`, 'i');
-      if (regex.test(jobText)) {
-        matchedLogiciels.push(tech);
+      const rawTech = String(tech).trim();
+      if (!rawTech) return;
+
+      // Découpage intelligent des termes composés (ex: "HTML5 / CSS3" -> "HTML5", "CSS3")
+      const subTokens = rawTech
+        .replace(/[\(\)\[\]]/g, ' ')
+        .split(/[\/\+,]/)
+        .map(t => t.trim())
+        .filter(t => t.length >= 2);
+
+      const aliases = subTokens.length > 0 ? subTokens : [rawTech];
+
+      const isMatched = aliases.some(alias => {
+        const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = alias.length <= 2
+          ? new RegExp(`(^|[^a-zA-Z0-9_#+])${escaped}([^a-zA-Z0-9_#+]|$)`)
+          : new RegExp(`(^|[^a-zA-Z0-9_#+])${escaped}([^a-zA-Z0-9_#+]|$)`, 'i');
+        return regex.test(jobText);
+      });
+
+      if (isMatched) {
+        matchedLogiciels.push(rawTech);
       }
     });
 
     if (matchedLogiciels.length > 0) {
-      const techScore = Math.min(45, matchedLogiciels.length * 10);
+      const techScore = Math.min(40, matchedLogiciels.length * 10);
       totalScore += techScore;
-      matchPoints.push(`${matchedLogiciels.length} outil(s) en commun (${matchedLogiciels.slice(0, 3).join(', ')}${matchedLogiciels.length > 3 ? '...' : ''})`);
+      matchPoints.push(`${matchedLogiciels.length} compétence(s)/outil(s) (${matchedLogiciels.slice(0, 3).join(', ')}${matchedLogiciels.length > 3 ? '...' : ''})`);
     }
   }
 
-  // 2. Titre & Cohérence Métier (Pondération max: 25 pts)
-  const jobTitleLower = (job.title || '').toLowerCase();
-  const cvExperiences = Array.isArray(cvCriteria.experience) ? cvCriteria.experience : [cvCriteria.experience || ''];
-  const hasRoleMatch = cvExperiences.some(exp => {
-    const expLower = exp.toLowerCase();
-    const tokens = jobTitleLower.split(/[\s\/\-]+/).filter(t => t.length > 3);
-    return tokens.some(tok => expLower.includes(tok));
-  });
+  // 2. Formations & Diplômes (Pondération max: 15 pts)
+  const cvFormations = Array.isArray(cvCriteria.formations) ? cvCriteria.formations : [cvCriteria.formations || ''];
+  const hasFormations = cvFormations.some(f => f && f.trim().length > 0);
+  if (hasFormations) {
+    const jobTokens = jobTitleLower.split(/[\s\/\-]+/).filter(t => t.length > 3);
+    const domainMatch = cvFormations.some(f => {
+      const fLower = f.toLowerCase();
+      return jobTokens.some(tok => fLower.includes(tok)) ||
+             (/\b(informatique|d[ée]velopp|web|logiciel|syst[èe]me|num[ée]rique|data|r[ée]seau)\b/i.test(fLower) &&
+              /\b(informatique|d[ée]velopp|web|logiciel|syst[èe]me|num[ée]rique|data|r[ée]seau|code|programmeur)\b/i.test(jobText));
+    });
 
-  if (hasRoleMatch) {
-    totalScore += 25;
-    matchPoints.push('Expérience en adéquation avec le poste');
-  } else if (jobTitleLower.includes('dév') || jobTitleLower.includes('dev') || jobTitleLower.includes('projet') || jobTitleLower.includes('logiciel')) {
-    totalScore += 18;
+    if (domainMatch) {
+      totalScore += 15;
+      matchPoints.push('Formation en adéquation avec le poste');
+    } else {
+      totalScore += 10;
+      matchPoints.push('Niveau de formation valorisé');
+    }
   }
 
-  // 3. Localisation & Mobilité (Pondération max: 20 pts)
+  // 3. Titre & Expérience Métier (incluant Alternance & Stage) (Pondération max: 25 pts)
+  const cvExperiences = Array.isArray(cvCriteria.experience) ? cvCriteria.experience : [cvCriteria.experience || ''];
+  const jobTokens = jobTitleLower.split(/[\s\/\-]+/).filter(t => t.length > 3);
+
+  const hasDirectRoleMatch = cvExperiences.some(exp => {
+    const expLower = exp.toLowerCase();
+    return jobTokens.some(tok => expLower.includes(tok));
+  });
+
+  const isAlternantDevProfile = cvExperiences.some(exp => /\b(alternan|apprenti|stage|d[ée]velopp|web|logiciel)\b/i.test(exp)) ||
+                                cvFormations.some(f => /\b(alternan|apprenti|d[ée]velopp|web|logiciel|rncp)\b/i.test(f));
+
+  if (hasDirectRoleMatch) {
+    totalScore += 25;
+    matchPoints.push('Expérience directement liée au poste');
+  } else if (isAlternantDevProfile && (jobTitleLower.includes('dév') || jobTitleLower.includes('dev') || jobTitleLower.includes('projet') || jobTitleLower.includes('logiciel') || jobTitleLower.includes('web'))) {
+    totalScore += 23;
+    matchPoints.push('Profil alternant / junior adapté au poste');
+  } else if (jobTitleLower.includes('dév') || jobTitleLower.includes('dev') || jobTitleLower.includes('logiciel')) {
+    totalScore += 16;
+  }
+
+  // 4. Localisation & Mobilité (Pondération max: 15 pts)
   const jobLocationLower = (job.location || '').toLowerCase();
   const cvLieuxLower = (cvCriteria.lieux || '').toLowerCase();
 
@@ -456,19 +504,19 @@ function calculateCvJobScore(job, cvCriteria) {
   const locationMatches = locationsList.some(loc => jobLocationLower.includes(loc) || loc.includes(jobLocationLower));
 
   if (jobLocationLower.includes('remote') || jobLocationLower.includes('télétravail') || jobLocationLower.includes('france entière')) {
-    totalScore += 20;
+    totalScore += 15;
     matchPoints.push('Télétravail / Mobilité compatible');
   } else if (locationMatches) {
-    totalScore += 20;
+    totalScore += 15;
     matchPoints.push('Zone géographique identique');
   } else if (cvCriteria.vehicule && (jobLocationLower.includes('france') || !cvLieuxLower)) {
-    totalScore += 12;
+    totalScore += 10;
     matchPoints.push('Candidat véhiculé');
   } else {
     totalScore += 5;
   }
 
-  // 4. Soft Skills & Formation (Pondération max: 10 pts)
+  // 5. Soft Skills (Pondération max: 5 pts)
   const cvSoftSkills = cvCriteria.softSkills || [];
   let foundSoft = 0;
   cvSoftSkills.forEach(soft => {
@@ -477,10 +525,8 @@ function calculateCvJobScore(job, cvCriteria) {
     }
   });
   if (foundSoft > 0) {
-    totalScore += Math.min(10, foundSoft * 5);
-    matchPoints.push(`${foundSoft} soft skill(s) identifiée(s)`);
-  } else {
     totalScore += 5;
+    matchPoints.push(`${foundSoft} soft skill(s) identifiée(s)`);
   }
 
   const finalScore = Math.min(100, Math.max(10, Math.round(totalScore)));

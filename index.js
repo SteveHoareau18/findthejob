@@ -5,7 +5,7 @@ require('dotenv').config();
 
 const { parseUserQueryAndExclusions, filterAndScoreJobs, getGroqClient } = require('./src/groqService');
 const { analyzeJobAndGetTips } = require('./src/jobAnalysisService');
-const { adaptCvCriteriaWithGroq } = require('./src/cvGroqService');
+const { adaptCvCriteriaWithGroq, scoreJobsWithCvGroq } = require('./src/cvGroqService');
 const { scrapeJobs } = require('./scrap');
 
 const app = express();
@@ -13,7 +13,7 @@ const PORT = process.env.PORT || 3000;
 
 // Middlewares
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 /**
@@ -34,10 +34,11 @@ app.get('/api/status', (req, res) => {
  * Prend en entrée :
  * - query: texte libre de recherche avec sauts de ligne possibles
  * - exclusions: texte libre des critères d'exclusion avec sauts de ligne possibles
+ * - cvCriteria: (optionnel) profil candidat pour scoring d'adéquation Groq direct
  */
 app.post('/api/search', async (req, res) => {
   const startTime = Date.now();
-  const { query = '', exclusions = '', geoRegion = 'all' } = req.body;
+  const { query = '', exclusions = '', geoRegion = 'all', cvCriteria = null } = req.body;
 
   if (!query && !exclusions) {
     return res.status(400).json({
@@ -67,7 +68,20 @@ app.post('/api/search', async (req, res) => {
 
     console.log(`[3/3] Analyse sémantique, détection des exclusions et tri (${rawJobs.length} offres)...`);
     // Étape 3 : Évaluation, calcul des exclusions et tri par pertinence de TOUTES les offres
-    const allScoredJobs = await filterAndScoreJobs(rawJobs, query, exclusions, intentData);
+    let allScoredJobs = await filterAndScoreJobs(rawJobs, query, exclusions, intentData);
+
+    // Étape optionnelle : Évaluation sémantique d'adéquation CV avec Groq si un profil candidat est fourni
+    if (cvCriteria && ((cvCriteria.logiciels && cvCriteria.logiciels.length) || (cvCriteria.experience && cvCriteria.experience.length) || (cvCriteria.formations && cvCriteria.formations.length))) {
+      console.log(`[CV Groq] Évaluation d'adéquation du profil candidat avec Groq (${allScoredJobs.length} offres)...`);
+      try {
+        const groqScored = await scoreJobsWithCvGroq(allScoredJobs, cvCriteria);
+        if (groqScored && groqScored.length > 0) {
+          allScoredJobs = groqScored;
+        }
+      } catch (cvErr) {
+        console.warn('[CV Groq] Avertissement scoring CV lors de la recherche:', cvErr.message);
+      }
+    }
 
     const elapsedSeconds = ((Date.now() - startTime) / 1000).toFixed(1);
     const recommendedCount = allScoredJobs.filter(j => !j.isExcluded && j.matchScore >= 40).length;
@@ -152,6 +166,38 @@ app.post('/api/cv/adapt-groq', async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.message || 'Erreur lors de l\'adaptation des critères par Groq.'
+    });
+  }
+});
+
+/**
+ * Route POST /api/cv/score-jobs
+ * Évalue sémantiquement l'adéquation d'une liste d'offres par rapport aux critères du candidat avec Groq
+ */
+app.post('/api/cv/score-jobs', async (req, res) => {
+  const { jobs = [], cvCriteria = null } = req.body;
+
+  if (!jobs || !Array.isArray(jobs) || jobs.length === 0) {
+    return res.status(400).json({ success: false, error: 'Aucune offre fournie pour l\'évaluation.' });
+  }
+
+  if (!cvCriteria) {
+    return res.status(400).json({ success: false, error: 'Critères du candidat manquants.' });
+  }
+
+  try {
+    console.log(`\n[CV Scoring] Évaluation Groq de ${jobs.length} offres face au profil candidat...`);
+    const scoredJobs = await scoreJobsWithCvGroq(jobs, cvCriteria);
+    res.json({
+      success: true,
+      isAiPowered: Boolean(getGroqClient()),
+      jobs: scoredJobs || jobs
+    });
+  } catch (error) {
+    console.error('[Erreur /api/cv/score-jobs]:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Erreur lors de l\'évaluation des offres par Groq.'
     });
   }
 });

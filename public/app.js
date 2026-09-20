@@ -29,6 +29,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const cvQuickSummary = document.getElementById('cvQuickSummary');
   const openCvCriteriaBtn = document.getElementById('openCvCriteriaBtn');
   const adaptCvGroqBtn = document.getElementById('adaptCvGroqBtn');
+  const recalcCvGroqBtn = document.getElementById('recalcCvGroqBtn');
+  const cvScoreStatusIndicator = document.getElementById('cvScoreStatusIndicator');
   const cvFilterRow = document.getElementById('cvFilterRow');
   const cvRelevanceFiltersContainer = document.getElementById('cvRelevanceFiltersContainer');
 
@@ -360,25 +362,112 @@ Pas de PHP ni de WordPress`;
   // GESTION DU CV & ANALYSE SANS IA (CRITÈRES DE PERTINENCE)
   // ========================================================
 
-  function recalculateAllCvScores() {
+  let isScoringCvWithGroq = false;
+
+  function updateCvScoringStatusUI(isLoading) {
+    if (!cvScoreStatusIndicator) return;
+    if (isLoading) {
+      cvScoreStatusIndicator.classList.remove('hidden');
+      cvScoreStatusIndicator.innerHTML = '<span class="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2.5 py-1 rounded-full"><span class="animate-spin text-xs">⏳</span><span>Évaluation Groq en cours...</span></span>';
+      if (recalcCvGroqBtn) {
+        recalcCvGroqBtn.disabled = true;
+        recalcCvGroqBtn.classList.add('opacity-50', 'cursor-not-allowed');
+      }
+    } else {
+      cvScoreStatusIndicator.classList.remove('hidden');
+      cvScoreStatusIndicator.innerHTML = '<span class="inline-flex items-center gap-1 text-xs font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full" title="Scores évalués avec l\'IA Groq"><span>✨</span><span>Scores validés par Groq</span></span>';
+      if (recalcCvGroqBtn) {
+        recalcCvGroqBtn.disabled = false;
+        recalcCvGroqBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+      }
+      setTimeout(() => {
+        if (!isScoringCvWithGroq && cvScoreStatusIndicator) {
+          cvScoreStatusIndicator.classList.add('hidden');
+        }
+      }, 6000);
+    }
+  }
+
+  function recalculateAllCvScores(forceGroq = false) {
     if (!currentCvCriteria) {
       currentJobs.forEach(j => {
         j.cvScore = null;
         j.cvMatchDetails = '';
         j.matchedLogiciels = [];
+        j.cvScoreSource = null;
+        j.cvMatchedStrengths = [];
       });
       if (cvFilterRow) cvFilterRow.classList.add('hidden');
       return;
     }
 
+    // 1. Calcul immédiat du score déterministe (pour un rendu instantané sans lag)
     currentJobs.forEach(job => {
+      // Si l'offre possède déjà un score Groq officiel et qu'on ne force pas le recalcul, on le préserve
+      if (!forceGroq && job.cvScoreSource === 'groq' && job.cvScore !== undefined && job.cvScore !== null) {
+        return;
+      }
       const res = window.cvParser.calculateCvJobScore(job, currentCvCriteria);
       job.cvScore = res.score;
       job.cvMatchDetails = res.matchDetails;
       job.matchedLogiciels = res.matchedLogiciels;
+      job.cvScoreSource = 'local';
     });
 
     if (cvFilterRow) cvFilterRow.classList.remove('hidden');
+
+    // 2. Évaluation sémantique Groq en arrière-plan si demandée
+    if (forceGroq && currentJobs.length > 0 && !isScoringCvWithGroq) {
+      scoreAllJobsWithGroqAsync();
+    }
+  }
+
+  async function scoreAllJobsWithGroqAsync() {
+    if (!currentCvCriteria || currentJobs.length === 0 || isScoringCvWithGroq) return;
+
+    isScoringCvWithGroq = true;
+    updateCvScoringStatusUI(true);
+
+    try {
+      console.log(`[Groq CV] Envoi de ${currentJobs.length} offres à l'API pour évaluation sémantique...`);
+      const response = await fetch('/api/cv/score-jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jobs: currentJobs,
+          cvCriteria: currentCvCriteria
+        })
+      });
+
+      const data = await response.json();
+      if (response.ok && data.success && Array.isArray(data.jobs)) {
+        const scoredMap = new Map();
+        data.jobs.forEach(sj => {
+          const key = sj.id || sj.title;
+          scoredMap.set(key, sj);
+        });
+
+        currentJobs.forEach(job => {
+          const key = job.id || job.title;
+          const sj = scoredMap.get(key);
+          if (sj && sj.cvScore !== undefined && sj.cvScore !== null) {
+            job.cvScore = sj.cvScore;
+            job.cvMatchDetails = sj.cvMatchDetails || job.cvMatchDetails;
+            job.cvMatchedStrengths = sj.cvMatchedStrengths || [];
+            job.cvScoreSource = 'groq';
+          }
+        });
+
+        // Réapplication immédiate du tri et des filtres
+        applyAllFiltersAndSort();
+        await saveCurrentAppState(7);
+      }
+    } catch (err) {
+      console.warn('[Groq CV] Échec de l\'évaluation asynchrone Groq:', err);
+    } finally {
+      isScoringCvWithGroq = false;
+      updateCvScoringStatusUI(false);
+    }
   }
 
   function updateCvQuickSummary(criteria, fileName) {
@@ -491,7 +580,7 @@ Pas de PHP ni de WordPress`;
       currentCvFileName = file.name;
 
       updateCvQuickSummary(currentCvCriteria, currentCvFileName);
-      recalculateAllCvScores();
+      recalculateAllCvScores(true);
       applyAllFiltersAndSort();
       await saveCurrentAppState(7);
     } catch (err) {
@@ -597,7 +686,7 @@ Pas de PHP ni de WordPress`;
         isGroqAdaptedCv = true;
         const displayName = currentCvFileName ? `${currentCvFileName} (adapté Groq*)` : 'Profil adapté par Groq*';
         updateCvQuickSummary(currentCvCriteria, displayName);
-        recalculateAllCvScores();
+        recalculateAllCvScores(true);
         applyAllFiltersAndSort();
         await saveCurrentAppState(7);
 
@@ -710,7 +799,7 @@ Pas de PHP ni de WordPress`;
 
       updateCvQuickSummary(currentCvCriteria, currentCvFileName || 'Critères personnalisés');
       closeCvCriteriaModalFunc();
-      recalculateAllCvScores();
+      recalculateAllCvScores(true);
       applyAllFiltersAndSort();
       await saveCurrentAppState(7);
     });
@@ -718,7 +807,7 @@ Pas de PHP ni de WordPress`;
 
   // Filtre Pertinence CV
   if (cvRelevanceFiltersContainer) {
-    cvRelevanceFiltersContainer.querySelectorAll('button').forEach(btn => {
+    cvRelevanceFiltersContainer.querySelectorAll('button[data-cv-relevance]').forEach(btn => {
       btn.addEventListener('click', (e) => {
         activeCvRelevanceFilter = e.currentTarget.dataset.cvRelevance || 'all';
         updateCvRelevanceFilterBadges();
@@ -727,9 +816,16 @@ Pas de PHP ni de WordPress`;
     });
   }
 
+  // Écouteur sur le bouton de recalcul Groq CV
+  if (recalcCvGroqBtn) {
+    recalcCvGroqBtn.addEventListener('click', () => {
+      scoreAllJobsWithGroqAsync();
+    });
+  }
+
   function updateCvRelevanceFilterBadges() {
     if (!cvRelevanceFiltersContainer) return;
-    cvRelevanceFiltersContainer.querySelectorAll('button').forEach(btn => {
+    cvRelevanceFiltersContainer.querySelectorAll('button[data-cv-relevance]').forEach(btn => {
       const isActive = btn.dataset.cvRelevance === activeCvRelevanceFilter;
       if (isActive) {
         btn.className = 'filter-badge active px-3 py-1 rounded-full text-xs font-bold border transition-all focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-emerald-500 bg-emerald-600 text-white border-emerald-600 shadow-sm';
@@ -758,7 +854,12 @@ Pas de PHP ni de WordPress`;
       const response = await fetch('/api/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query, exclusions, geoRegion })
+        body: JSON.stringify({
+          query,
+          exclusions,
+          geoRegion,
+          cvCriteria: currentCvCriteria
+        })
       });
 
       const data = await response.json();
@@ -1262,12 +1363,15 @@ Pas de PHP ni de WordPress`;
       let cvScoreBadgeHtml = '<span class="text-slate-400 text-xs">-</span>';
       if (job.cvScore !== undefined && job.cvScore !== null) {
         const cs = job.cvScore;
+        const isGroq = job.cvScoreSource === 'groq';
+        const groqIcon = isGroq ? ' ✨' : '';
+        const tooltip = `${job.cvMatchDetails || ''}${isGroq ? ' (Évalué sémantiquement par Groq AI)' : ''}`;
         if (cs >= 70) {
-          cvScoreBadgeHtml = `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-black bg-emerald-100 text-emerald-950 border border-emerald-300" title="${escapeHtml(job.cvMatchDetails || '')}">🎯 ${cs}%</span>`;
+          cvScoreBadgeHtml = `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-black bg-emerald-100 text-emerald-950 border border-emerald-300" title="${escapeHtml(tooltip)}">🎯 ${cs}%${groqIcon}</span>`;
         } else if (cs >= 40) {
-          cvScoreBadgeHtml = `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-black bg-amber-100 text-amber-950 border border-amber-300" title="${escapeHtml(job.cvMatchDetails || '')}">🎯 ${cs}%</span>`;
+          cvScoreBadgeHtml = `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-black bg-amber-100 text-amber-950 border border-amber-300" title="${escapeHtml(tooltip)}">🎯 ${cs}%${groqIcon}</span>`;
         } else {
-          cvScoreBadgeHtml = `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-black bg-slate-100 text-slate-700 border border-slate-300" title="${escapeHtml(job.cvMatchDetails || '')}">🎯 ${cs}%</span>`;
+          cvScoreBadgeHtml = `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-black bg-slate-100 text-slate-700 border border-slate-300" title="${escapeHtml(tooltip)}">🎯 ${cs}%${groqIcon}</span>`;
         }
       }
 
@@ -1443,12 +1547,15 @@ Pas de PHP ni de WordPress`;
       let cvScoreBadgeHtml = '';
       if (job.cvScore !== undefined && job.cvScore !== null) {
         const cs = job.cvScore;
+        const isGroq = job.cvScoreSource === 'groq';
+        const groqTag = isGroq ? ' ✨' : '';
+        const tooltip = `${job.cvMatchDetails || ''}${isGroq ? ' (Évalué sémantiquement par Groq AI)' : ''}`;
         if (cs >= 70) {
-          cvScoreBadgeHtml = `<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-black bg-emerald-100 text-emerald-950 border border-emerald-300" title="${escapeHtml(job.cvMatchDetails || '')}">🎯 CV ${cs}%</span>`;
+          cvScoreBadgeHtml = `<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-black bg-emerald-100 text-emerald-950 border border-emerald-300" title="${escapeHtml(tooltip)}">🎯 CV ${cs}%${groqTag}</span>`;
         } else if (cs >= 40) {
-          cvScoreBadgeHtml = `<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-black bg-amber-100 text-amber-950 border border-amber-300" title="${escapeHtml(job.cvMatchDetails || '')}">🎯 CV ${cs}%</span>`;
+          cvScoreBadgeHtml = `<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-black bg-amber-100 text-amber-950 border border-amber-300" title="${escapeHtml(tooltip)}">🎯 CV ${cs}%${groqTag}</span>`;
         } else {
-          cvScoreBadgeHtml = `<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-black bg-slate-100 text-slate-700 border border-slate-300" title="${escapeHtml(job.cvMatchDetails || '')}">🎯 CV ${cs}%</span>`;
+          cvScoreBadgeHtml = `<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-black bg-slate-100 text-slate-700 border border-slate-300" title="${escapeHtml(tooltip)}">🎯 CV ${cs}%${groqTag}</span>`;
         }
       }
 
@@ -1534,12 +1641,21 @@ Pas de PHP ni de WordPress`;
 
           <!-- Bloc Adéquation CV (si calculé) -->
           ${job.cvScore !== null && job.cvScore !== undefined ? `
-            <div class="p-2.5 rounded-xl bg-emerald-50/70 border border-emerald-200 text-xs text-emerald-950 space-y-1">
+            <div class="p-2.5 rounded-xl bg-emerald-50/70 border border-emerald-200 text-xs text-emerald-950 space-y-1.5">
               <div class="flex items-center justify-between gap-1 font-bold">
-                <span class="flex items-center gap-1"><span>🎯</span> <span>Adéquation CV (${job.cvScore}%)</span></span>
-                ${job.matchedLogiciels && job.matchedLogiciels.length > 0 ? `<span class="text-[11px] font-medium text-emerald-800">${job.matchedLogiciels.length} logiciel(s) commun(s)</span>` : ''}
+                <span class="flex items-center gap-1.5">
+                  <span>🎯</span>
+                  <span>Adéquation CV (${job.cvScore}%)</span>
+                  ${job.cvScoreSource === 'groq' ? '<span class="text-[10px] px-2 py-0.5 rounded-full bg-purple-100 text-purple-900 border border-purple-200 font-bold flex items-center gap-0.5"><span>✨</span> <span>Groq AI</span></span>' : ''}
+                </span>
+                ${job.matchedLogiciels && job.matchedLogiciels.length > 0 ? `<span class="text-[11px] font-medium text-emerald-800">${job.matchedLogiciels.length} outil(s)</span>` : ''}
               </div>
               <p class="text-[11px] text-emerald-800 leading-tight">${escapeHtml(job.cvMatchDetails || 'Profil compatible.')}</p>
+              ${job.cvMatchedStrengths && job.cvMatchedStrengths.length > 0 ? `
+                <div class="flex flex-wrap gap-1 pt-1">
+                  ${job.cvMatchedStrengths.map(s => `<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-950 border border-emerald-300">✓ ${escapeHtml(s)}</span>`).join('')}
+                </div>
+              ` : ''}
             </div>
           ` : ''}
 

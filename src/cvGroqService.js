@@ -245,7 +245,158 @@ Directives de précision :
   }
 }
 
+/**
+ * Évalue sémantiquement l'adéquation entre une liste d'offres et un profil CV via Groq AI
+ * Calcul 100% générique, valorisant les alternances, formations et compétences réelles
+ * @param {Array} jobs Liste d'offres d'emploi
+ * @param {Object} cvCriteria Critères du candidat (formations, experience, logiciels, softSkills, lieux, vehicule)
+ */
+async function scoreJobsWithCvGroq(jobs, cvCriteria) {
+  if (!jobs || !Array.isArray(jobs) || jobs.length === 0) {
+    return [];
+  }
+  if (!cvCriteria) {
+    return jobs.map(j => ({ ...j, cvScore: null, cvMatchDetails: 'Aucun critère CV fourni' }));
+  }
+
+  const client = getGroqClient();
+  const model = getModelName();
+
+  if (!client) {
+    console.log('[cvGroqService] Groq non configuré pour le scoring CV. Fallback local.');
+    return null;
+  }
+
+  // Profil synthétisé pour le prompt
+  const candidateProfile = {
+    formations: Array.isArray(cvCriteria.formations) ? cvCriteria.formations : [cvCriteria.formations || ''],
+    experience: Array.isArray(cvCriteria.experience) ? cvCriteria.experience : [cvCriteria.experience || ''],
+    logiciels: Array.isArray(cvCriteria.logiciels) ? cvCriteria.logiciels : [cvCriteria.logiciels || ''],
+    softSkills: Array.isArray(cvCriteria.softSkills) ? cvCriteria.softSkills : [cvCriteria.softSkills || ''],
+    lieux: cvCriteria.lieux || 'Non précisé',
+    vehicule: !!cvCriteria.vehicule
+  };
+
+  const systemPrompt = `Tu es un recruteur expert et évaluateur RH impartial. Ta mission est d'évaluer de manière rigoureuse et bienveillante l'adéquation globale (score de 0 à 100%) entre le profil d'un candidat et une liste d'offres d'emploi.
+
+Profil candidat :
+- Formations & Diplômes : ${JSON.stringify(candidateProfile.formations)}
+- Expériences professionnelles : ${JSON.stringify(candidateProfile.experience)}
+- Logiciels & Compétences techniques : ${JSON.stringify(candidateProfile.logiciels)}
+- Soft skills : ${JSON.stringify(candidateProfile.softSkills)}
+- Localisation / Mobilité : ${candidateProfile.lieux} (Véhiculé: ${candidateProfile.vehicule ? 'Oui' : 'Non'})
+
+Directives d'évaluation GÉNÉRIQUES (valables pour tout domaine professionnel) :
+1. EXPÉRIENCES & ALTERNANCE : L'alternance (apprentissage ou professionnalisation) et les stages longs sont de VRAIES expériences professionnelles de terrain. Valorise-les pleinement comme telles (ne pénalise JAMAIS un candidat parce qu'il a été alternant).
+2. FORMATIONS & DIPLÔMES : Prends en compte le domaine d'études et le niveau académique (Bac, Bac+2/3/5, BTS, Titre RNCP, diplôme d'ingénieur, université, autodidacte) face aux prérequis de l'offre.
+3. COMPÉTENCES & TRANSFÉRABILITÉ : Analyse la compatibilité réelle et les technologies/outils équivalents ou complémentaires.
+4. LOCALISATION : Vérifie la cohérence géographique (même secteur, région proche, candidat véhiculé ou offre mentionnant télétravail/remote).
+5. ÉCHELLE DE SCORE DE MATCHING (0 à 100) :
+   - 80 à 100% : Excellente adéquation (profil aligné, compétences clés présentes, alternance ou expérience opérationnelle très pertinente).
+   - 65 à 79% : Bonne adéquation (profil junior/alternant adapté au poste, socle technique présent avec potentiel rapide d'intégration).
+   - 45 à 64% : Adéquation partielle (domaine proche mais écarts notables de technologies ou niveau d'expérience demandé trop élevé).
+   - 10 à 44% : Faible adéquation ou métier sans rapport.
+
+Tu dois IMPÉRATIVEMENT répondre uniquement avec un objet JSON respectant ce schéma :
+{
+  "results": [
+    {
+      "index": 0,
+      "score": 85,
+      "explanation": "Courte phrase (max 18 mots) expliquant précisément le score (ex: 'Alternance valorisée, bonne maîtrise de la stack et profil junior idéal pour cette offre.')",
+      "matchedStrengths": ["Force 1", "Force 2", "Force 3"]
+    }
+  ]
+}
+Ne renvoie aucun texte en dehors du JSON pur.`;
+
+  // Traitement par lots de 12 offres pour optimiser latence et limites de tokens
+  const BATCH_SIZE = 12;
+  const batches = [];
+  for (let i = 0; i < jobs.length; i += BATCH_SIZE) {
+    batches.push({
+      startIndex: i,
+      items: jobs.slice(i, i + BATCH_SIZE)
+    });
+  }
+
+  console.log(`[cvGroqService] Évaluation sémantique Groq de ${jobs.length} offres en ${batches.length} lot(s)...`);
+
+  const scoredResultsMap = new Map();
+
+  const batchPromises = batches.map(async (batch, batchIdx) => {
+    const compactJobs = batch.items.map((job, localIdx) => ({
+      index: localIdx,
+      title: job.title || '',
+      company: job.company || '',
+      location: job.location || '',
+      contractType: job.contractType || '',
+      tags: Array.isArray(job.tags) ? job.tags.slice(0, 6) : [],
+      description: (job.description || '').replace(/\s+/g, ' ').trim().slice(0, 450)
+    }));
+
+    try {
+      const completion = await client.chat.completions.create({
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: `Évalue ces ${compactJobs.length} offres d'emploi pour le candidat :\n\n${JSON.stringify(compactJobs, null, 2)}` }
+        ],
+        temperature: 0.1,
+        response_format: { type: 'json_object' }
+      });
+
+      const rawContent = completion.choices[0]?.message?.content;
+      if (!rawContent) return;
+
+      let parsed;
+      try {
+        parsed = JSON.parse(rawContent);
+      } catch {
+        const cleaned = rawContent.replace(/```json\s*/gi, '').replace(/```\s*$/gi, '').trim();
+        parsed = JSON.parse(cleaned);
+      }
+
+      const list = parsed.results || parsed.scores || parsed.evaluations || [];
+      list.forEach(res => {
+        const globalIdx = batch.startIndex + (res.index !== undefined ? res.index : 0);
+        const originalJob = jobs[globalIdx];
+        if (originalJob) {
+          const scoreNum = Math.min(100, Math.max(10, Math.round(Number(res.score) || 50)));
+          scoredResultsMap.set(originalJob.id || `idx_${globalIdx}`, {
+            score: scoreNum,
+            explanation: res.explanation || 'Profil évalué par Groq AI.',
+            matchedStrengths: Array.isArray(res.matchedStrengths) ? res.matchedStrengths : []
+          });
+        }
+      });
+    } catch (err) {
+      console.warn(`[cvGroqService] Avertissement sur le lot ${batchIdx + 1}/${batches.length}:`, err.message);
+    }
+  });
+
+  await Promise.allSettled(batchPromises);
+
+  // Fusionner les résultats avec les offres initiales
+  return jobs.map((job, idx) => {
+    const key = job.id || `idx_${idx}`;
+    const groqEval = scoredResultsMap.get(key);
+    if (groqEval) {
+      return {
+        ...job,
+        cvScore: groqEval.score,
+        cvMatchDetails: groqEval.explanation,
+        cvMatchedStrengths: groqEval.matchedStrengths,
+        cvScoreSource: 'groq'
+      };
+    }
+    return job;
+  });
+}
+
 module.exports = {
   adaptCvCriteriaWithGroq,
-  validateAndNormalizeCvCriteria
+  validateAndNormalizeCvCriteria,
+  scoreJobsWithCvGroq
 };
+

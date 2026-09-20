@@ -563,7 +563,7 @@
                 <span class="text-emerald-600" aria-hidden="true">📄</span>
                 <span>Pertinence CV :</span>
               </span>
-              <div id="cvRelevanceFiltersContainer" class="flex flex-wrap gap-1.5" role="group" aria-label="Filtrer par degré d'adéquation avec votre CV">
+              <div id="cvRelevanceFiltersContainer" class="flex flex-wrap items-center gap-1.5" role="group" aria-label="Filtrer par degré d'adéquation avec votre CV">
                 <button type="button" class="filter-badge active px-3 py-1 rounded-full text-xs font-bold border border-emerald-600 bg-emerald-50 text-emerald-800 transition-all" data-cv-relevance="all">
                   Tous les scores
                 </button>
@@ -575,6 +575,18 @@
                 </button>
                 <button type="button" class="filter-badge px-3 py-1 rounded-full text-xs font-bold border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 transition-all" data-cv-relevance="low">
                   ○ Match faible (&lt; 40%)
+                </button>
+
+                <!-- Indicateur et bouton de recalcul Groq -->
+                <span id="cvScoreStatusIndicator" class="hidden ml-1"></span>
+                <button
+                  type="button"
+                  id="recalcCvGroqBtn"
+                  class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 transition-all cursor-pointer shadow-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  title="Recalculer sémantiquement l'adéquation de toutes les offres avec Groq AI"
+                >
+                  <span aria-hidden="true">✨</span>
+                  <span>Recalculer avec Groq</span>
                 </button>
               </div>
             </div>

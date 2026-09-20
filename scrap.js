@@ -3,6 +3,7 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const { scrapeLinkedIn, scrapeLinkedInJobs } = require('./src/scrapers/linkedin');
 const { scrapeFranceTravail, scrapeFranceTravailJobs } = require('./src/scrapers/francetravail');
+const { scrapeIndeed, scrapeIndeedJobs } = require('./src/scrapers/indeed');
 
 // Configuration HTTP avec headers réalistes simulant un navigateur complet
 const browserHeaders = {
@@ -192,145 +193,7 @@ async function scrapeJooble(searchTerm, location = 'France', limit = 20) {
   return [];
 }
 
-/**
- * Helper d'exécution curl avec headers réalistes pour contourner les empreintes TLS
- */
-function fetchWithCurl(url) {
-  return new Promise((resolve, reject) => {
-    const args = [
-      '-s',
-      url,
-      '-H', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-      '-H', 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-      '-H', 'Accept-Language: fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7',
-      '--compressed'
-    ];
-    execFile('curl.exe', args, { maxBuffer: 15 * 1024 * 1024, timeout: 12000 }, (error, stdout) => {
-      if (error) return reject(error);
-      resolve(stdout);
-    });
-  });
-}
-
-function parseIndeedHtml(html, fallbackUrl, location = 'France', limit = 25) {
-  const jobs = [];
-  if (!html) return jobs;
-
-  // 1. Extraction haute fidélité via mosaicProviderJobCardsModel JSON
-  try {
-    const match = html.match(/window\.mosaic\.providerData\["mosaic-provider-jobcards"\]\s*=\s*(\{.+?\});/);
-    if (match) {
-      const data = JSON.parse(match[1]);
-      const results = data.metaData?.mosaicProviderJobCardsModel?.results || [];
-      for (const r of results) {
-        if (jobs.length >= limit) break;
-        if (r.title && r.jobkey) {
-          let salary = 'Non communiqué';
-          if (r.extractedSalary) {
-            const { min, max, type } = r.extractedSalary;
-            const unit = type === 'YEARLY' ? '€/an' : type === 'MONTHLY' ? '€/mois' : '€';
-            salary = min && max ? `${min}€ - ${max} ${unit}` : `${min || max} ${unit}`;
-          } else if (r.salarySnippet?.text) {
-            salary = r.salarySnippet.text;
-          }
-
-          let snippet = '';
-          if (r.snippet) {
-            snippet = cheerio.load(`<div>${r.snippet}</div>`).text().trim();
-          }
-
-          jobs.push({
-            id: `indeed-${r.jobkey}`,
-            title: r.displayTitle || r.title,
-            company: r.company || r.companyName || 'Recruteur Indeed',
-            location: r.formattedLocation || location,
-            contractType: Array.isArray(r.jobTypes) && r.jobTypes.length > 0 ? r.jobTypes.join(' / ') : 'CDI / CDD',
-            salary,
-            description: snippet || `${r.title} chez ${r.company || 'Indeed'} à ${r.formattedLocation || location}.`,
-            tags: ['Indeed', ...(r.jobTypes || [])],
-            url: `https://fr.indeed.com/viewjob?jk=${r.jobkey}`,
-            source: 'Indeed',
-            date: r.formattedRelativeTime || 'Récemment'
-          });
-        }
-      }
-    }
-  } catch (e) {
-    // Fallback silencieux vers le DOM Cheerio
-  }
-
-  // 2. Extraction de secours via les sélecteurs DOM Cheerio
-  if (jobs.length === 0) {
-    const $ = cheerio.load(html);
-    $('[data-jk]').each((_, el) => {
-      if (jobs.length >= limit) return false;
-      const card = $(el).closest('li, div.cardOutline, div.job_seen_beacon');
-      const title = card.find('h2.jobTitle, a[data-jk]').text().trim() || $(el).text().trim();
-      const company = card.find('[data-testid="company-name"], span.companyName').text().trim();
-      const loc = card.find('[data-testid="text-location"]').text().trim();
-      const jk = $(el).attr('data-jk');
-      if (title && jk && !jobs.some(j => j.id === `indeed-${jk}`)) {
-        jobs.push({
-          id: `indeed-${jk}`,
-          title,
-          company: company || 'Recruteur Indeed',
-          location: loc || location,
-          contractType: 'CDI / CDD',
-          salary: 'Non communiqué',
-          description: `${title} chez ${company || 'Indeed'} à ${loc || location}.`,
-          tags: ['Indeed', location],
-          url: `https://fr.indeed.com/viewjob?jk=${jk}`,
-          source: 'Indeed',
-          date: 'Récemment'
-        });
-      }
-    });
-  }
-
-  return jobs;
-}
-
-/**
- * 6. INDEED (Utilise https://fr.indeed.com/jobs?q=[searchWord])
- */
-async function scrapeIndeed(searchTerm, location = 'France', limit = 25) {
-  const cleanTerm = cleanSearchKeyword(searchTerm);
-  // Construction directe de l'URL demandée : https://fr.indeed.com/jobs?q=[searchWord]
-  const url = `https://fr.indeed.com/jobs?q=${encodeURIComponent(cleanTerm)}`;
-  console.log(`[Scraper Indeed] 🔍 Interrogation : ${url}`);
-
-  let jobs = [];
-
-  try {
-    // 1. Appel via curl avec headers réalistes
-    const html = await fetchWithCurl(url);
-    jobs = parseIndeedHtml(html, url, location, limit);
-  } catch (err) {
-    console.warn(`[Scraper Indeed] Tentative curl échouée (${err.message}), repli axios...`);
-    try {
-      const res = await httpClient.get(url);
-      jobs = parseIndeedHtml(res.data, url, location, limit);
-    } catch (axiosErr) {
-      console.warn(`[Scraper Indeed] Échec axios: ${axiosErr.message}`);
-    }
-  }
-
-  // 2. Retry intelligent si 0 résultat et terme composé
-  if (jobs.length === 0 && cleanTerm.includes(' ')) {
-    const fallbackWord = cleanTerm.split(' ')[0];
-    if (fallbackWord && fallbackWord.length > 2) {
-      const fallbackUrl = `https://fr.indeed.com/jobs?q=${encodeURIComponent(fallbackWord)}`;
-      console.log(`[Scraper Indeed] 🔄 Retry avec mot-clé de secours : ${fallbackUrl}`);
-      try {
-        const htmlFallback = await fetchWithCurl(fallbackUrl);
-        jobs = parseIndeedHtml(htmlFallback, fallbackUrl, location, limit);
-      } catch (e) {}
-    }
-  }
-
-  console.log(`[Scraper Indeed] ✅ ${jobs.length} offres Indeed récupérées.`);
-  return jobs;
-}
+// 6. INDEED : Délégué au module générique en couches ./src/scrapers/indeed
 
 /**
  * 7. REMOTIVE (Offres Tech & Télétravail Europe / International)
@@ -456,6 +319,21 @@ async function scrapeJobs({ query, keywords = [], primaryTitle = '', location = 
     limit: 25
   };
 
+  // Configuration ciblée pour Indeed
+  let indeedFromage = null;
+  if (/24h|1 jour|derni[eè]res heures/i.test(qLower)) indeedFromage = 1;
+  else if (/3 jours/i.test(qLower)) indeedFromage = 3;
+  else if (/semaine|7 jours/i.test(qLower)) indeedFromage = 7;
+
+  const indeedConfig = {
+    q: indeedWord,
+    l: isDrom ? standardLocation : (standardLocation !== 'France' && standardLocation !== 'all' ? standardLocation : 'France'),
+    radius: isSpecificCity ? 15 : null,
+    fromage: indeedFromage,
+    start: 0,
+    limit: 25
+  };
+
   // Lancement concurrent de TOUS les scrapers
   const scrapersToRun = [
     // 1. France Travail (Module générique en couches avec retry mots-clés)
@@ -473,8 +351,8 @@ async function scrapeJobs({ query, keywords = [], primaryTitle = '', location = 
     // 5. Jooble (API avec clé si dispo)
     scrapeJooble(searchTerm, standardLocation, 20),
 
-    // 6. Indeed (Utilise https://fr.indeed.com/jobs?q=[searchWord])
-    scrapeIndeed(indeedWord, standardLocation, 25),
+    // 6. Indeed (Module générique en couches)
+    scrapeIndeed(indeedConfig),
   ];
 
   // 7. Remotive (Si Europe ou Tous)
@@ -528,5 +406,6 @@ module.exports = {
   scrapeHellowork,
   scrapeMeteojob,
   scrapeJooble,
-  scrapeIndeed
+  scrapeIndeed,
+  scrapeIndeedJobs
 };
