@@ -6,6 +6,35 @@ Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/)
 
 ---
 
+## [1.1.0](https://github.com/SteveHoareau18/findthejob/compare/findthejob-v1.0.0...findthejob-v1.1.0) (2026-09-20)
+
+
+### Features
+
+* chatbot and LM generation ([663bdba](https://github.com/SteveHoareau18/findthejob/commit/663bdba116e39b2fd7df22b5e41eb308aa6b1d50))
+* **ci:** improve audit, build, scan, deploy ghcr ([e72ed39](https://github.com/SteveHoareau18/findthejob/commit/e72ed3938d6e86170d29deed4a7b478b896b167b))
+* **ci:** semver changelog automatix ([d1914b3](https://github.com/SteveHoareau18/findthejob/commit/d1914b30da2c3b8886b64b3468c4339f0c37a3a1))
+* import wss ([d8385a3](https://github.com/SteveHoareau18/findthejob/commit/d8385a3a94cf291bb244e874e0fe50eb7a4d6452))
+* improve candidate in offer ([a051004](https://github.com/SteveHoareau18/findthejob/commit/a0510044c4b23053aa9ed9551230ec40e4d94649))
+* PWA ([d0670eb](https://github.com/SteveHoareau18/findthejob/commit/d0670eb872674f3ab3ef5270ccb43fb6beb65a37))
+* vercel functions websocket support ([4b52883](https://github.com/SteveHoareau18/findthejob/commit/4b5288347c0340560f5979fc18f37ee4fd399a75))
+
+
+### Bug Fixes
+
+* **apply:** ouvrir le pop-up d'action de postulation depuis la modale Résumé & Tips ([8e3b09a](https://github.com/SteveHoareau18/findthejob/commit/8e3b09a1048fe76630de2aa8d5aea30afe273085))
+* limit groq token ([7a6acab](https://github.com/SteveHoareau18/findthejob/commit/7a6acab2f1b2e036687e6d8ee40da4f98e0623f3))
+* no port expose ([4e7aa09](https://github.com/SteveHoareau18/findthejob/commit/4e7aa0957c413999c1b0af4e445945e323215ea1))
+* remove open port in prod ([af29a7e](https://github.com/SteveHoareau18/findthejob/commit/af29a7e5076e4068ea31bbb7693ef6465609b201))
+* score CV ([919a84d](https://github.com/SteveHoareau18/findthejob/commit/919a84df4eee8df0b4c4bb90925fb8a31b67e1f5))
+* scrap francetravailjobs ([d9d2d68](https://github.com/SteveHoareau18/findthejob/commit/d9d2d68c8e7e82125af7560464e95d2e20033c65))
+* scrap linkedinjobs ([a33be67](https://github.com/SteveHoareau18/findthejob/commit/a33be67921eed2b131e307e2cc16f63e53169f34))
+* scrap linkedinjobs ([e51b50f](https://github.com/SteveHoareau18/findthejob/commit/e51b50f51019b84dbcf4b656aa9e10ac8439b8b3))
+* update node version 24.21 ([4260bae](https://github.com/SteveHoareau18/findthejob/commit/4260baeb46f84c71245364716bf8f7bc5391c862))
+* update npm version ([f886c19](https://github.com/SteveHoareau18/findthejob/commit/f886c19b44a7a76c87743b6a44a9fef46901ba2a))
+* UX redirect to offer, adding a pop-up instead ([a0d8ca2](https://github.com/SteveHoareau18/findthejob/commit/a0d8ca28181fb3053df94fedcb9f98c538bc8a33))
+* WSS support ([96a4afc](https://github.com/SteveHoareau18/findthejob/commit/96a4afcfe3f4d6cb818dec38e4472b6376daae9e))
+
 ## [Non publié] - Unreleased
 
 ### Prévu
