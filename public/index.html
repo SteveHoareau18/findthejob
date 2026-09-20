@@ -1,0 +1,1063 @@
+<!DOCTYPE html>
+<html lang="fr" class="h-full bg-slate-50">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FindTheJob - Recherche d'emploi intelligente & Scraping propulsé par Groq AI</title>
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Plus Jakarta Sans"', 'system-ui', '-apple-system', 'sans-serif'],
+          },
+          colors: {
+            brand: {
+              50: '#eef2ff',
+              100: '#e0e7ff',
+              500: '#6366f1',
+              600: '#4f46e5',
+              700: '#4338ca',
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css" />
+
+  <!-- Librairies d'extraction de CV côté client (Sans IA, 100% local) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script>
+    if (typeof pdfjsLib !== 'undefined') {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
+  </script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+</head>
+<body class="min-h-full font-sans text-slate-800 antialiased flex flex-col justify-between">
+
+  <!-- Lien d'évitement RGAA / WCAG pour la navigation au clavier -->
+  <a href="#main-content" class="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-50 focus:px-4 focus:py-2 focus:bg-indigo-600 focus:text-white focus:rounded-md focus:shadow-lg focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+    Aller directement au contenu principal
+  </a>
+
+  <div class="w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+    
+    <!-- En-tête Accessible -->
+    <header role="banner" class="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 pb-6 border-b border-slate-200">
+      <div class="flex items-center gap-3">
+        <div class="w-12 h-12 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-2xl shadow-sm" aria-hidden="true">
+          🎯
+        </div>
+        <div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <h1 class="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">
+              FindTheJob
+            </h1>
+            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-gradient-to-r from-amber-500 to-indigo-600 text-white shadow-sm">
+              propulsé par Groq AI
+            </span>
+          </div>
+          <p class="text-sm sm:text-base text-slate-600 font-medium">
+            Scraping multi-plateformes (France, DROM, Europe) avec filtrage sémantique et analyse des offres
+          </p>
+        </div>
+      </div>
+
+      <!-- Contrôles du Cache Local (Cookies, localStorage & IndexedDB) -->
+      <div class="flex items-center gap-2.5 flex-wrap self-stretch lg:self-auto justify-between lg:justify-end pt-2 lg:pt-0">
+        <!-- Badge durée de vie du cache -->
+        <div
+          id="cacheStatusBadge"
+          class="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold border bg-slate-50 text-slate-700 border-slate-200 shadow-sm transition-all"
+          role="status"
+          aria-live="polite"
+          title="Durée de validité des données locales sauvegardées"
+        >
+          <span id="cacheStatusDot" class="w-2.5 h-2.5 rounded-full bg-slate-400" aria-hidden="true"></span>
+          <span id="cacheStatusText">Aucune donnée locale</span>
+        </div>
+
+        <!-- Bouton Enregistrer / Prolonger 7j -->
+        <button
+          type="button"
+          id="saveCacheBtn"
+          class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-indigo-600 bg-indigo-50 hover:bg-indigo-600 hover:text-white text-indigo-700 font-bold text-xs shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-indigo-500 min-h-[38px]"
+          title="Sauvegarder et prolonger la durée de vie du cache à 7 jours (Cookies, localStorage & IndexedDB)"
+        >
+          <span aria-hidden="true">💾</span>
+          <span>Enregistrer (+7j)</span>
+        </button>
+
+        <!-- Bouton Vider le cache -->
+        <button
+          type="button"
+          id="clearCacheBtn"
+          class="hidden inline-flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-semibold text-slate-500 hover:text-rose-700 hover:bg-rose-50 border border-slate-200 hover:border-rose-200 transition-all focus:outline-none focus:ring-2 focus:ring-rose-500 min-h-[38px]"
+          title="Vider toutes les données sauvegardées (Cookies, localStorage et IndexedDB)"
+          aria-label="Vider le cache local"
+        >
+          <span aria-hidden="true">🗑️</span>
+          <span class="sr-only sm:not-sr-only">Vider</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Contenu Principal -->
+    <main id="main-content" role="main" class="space-y-8">
+
+      <!-- Formulaire de recherche et d'exclusions -->
+      <section aria-labelledby="search-section-title" class="bg-white rounded-2xl border border-slate-200 p-6 sm:p-8 shadow-sm transition-all hover:shadow-md">
+        <h2 id="search-section-title" class="sr-only">Formulaire de recherche d'offres d'emploi</h2>
+        
+        <form id="searchForm" class="space-y-6">
+          <!-- Étape 1 : Initialisez votre profil (CV ou Exemple) -->
+          <div class="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 sm:p-6 space-y-4 shadow-sm">
+            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+              <div>
+                <h3 class="text-sm sm:text-base font-bold text-slate-900 flex items-center gap-2">
+                  <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-indigo-600 text-white text-xs font-black shadow-sm" aria-hidden="true">1</span>
+                  <span>Étape 1 : Initialisez votre profil (CV ou Exemple)</span>
+                </h3>
+                <p class="text-xs text-slate-600 mt-1">
+                  Importez votre CV (.pdf, .docx, .txt) pour extraire vos compétences et préremplir vos critères, ou commencez instantanément avec un exemple.
+                </p>
+              </div>
+
+              <!-- Boutons de gestion des critères -->
+              <div class="flex items-center gap-2 flex-wrap">
+                <!-- Bouton Modifier les critères -->
+                <button
+                  type="button"
+                  id="openCvCriteriaBtn"
+                  class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-indigo-500 min-h-[40px]"
+                  aria-label="Modifier manuellement les critères extraits du CV"
+                >
+                  <span aria-hidden="true">✏️</span>
+                  <span>Modifier les critères</span>
+                </button>
+
+                <!-- Bouton Adapter les critères avec Groq* -->
+                <button
+                  type="button"
+                  id="adaptCvGroqBtn"
+                  class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-indigo-200 bg-gradient-to-r from-indigo-50 via-purple-50 to-indigo-50 hover:from-indigo-600 hover:to-purple-600 hover:text-white text-indigo-800 font-bold text-xs shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-indigo-500 min-h-[40px]"
+                  aria-label="Adapter automatiquement les critères du CV avec l'IA Groq"
+                  title="Analyser le CV avec l'IA Groq pour préremplir et enrichir automatiquement vos critères"
+                >
+                  <span aria-hidden="true">✨</span>
+                  <span>Adapter les critères avec Groq*</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Conteneur d'Initialisation : Dropzone CV & Choix d'Exemple -->
+            <div id="cvInitialChoiceContainer" class="grid grid-cols-1 lg:grid-cols-12 gap-3 items-stretch pt-1">
+              
+              <!-- Option A : Dropzone de Téléversement CV -->
+              <div class="lg:col-span-7 flex flex-col">
+                <input type="file" id="cvFileInput" accept=".pdf,.docx,.txt" class="sr-only" />
+                <label
+                  for="cvFileInput"
+                  id="cvUploadLabel"
+                  class="flex-1 flex flex-col items-center justify-center p-4 rounded-xl border-2 border-dashed border-indigo-200 bg-white hover:border-indigo-400 hover:bg-indigo-50/40 text-center cursor-pointer transition-all focus-within:ring-2 focus-within:ring-indigo-500 min-h-[96px] group shadow-sm"
+                >
+                  <div class="flex items-center gap-2 text-indigo-600 group-hover:scale-105 transition-transform">
+                    <span class="text-xl" aria-hidden="true">📄</span>
+                    <span id="cvUploadBtnText" class="text-xs sm:text-sm font-bold text-slate-800 group-hover:text-indigo-700">
+                      Glissez votre CV ici ou cliquez pour parcourir
+                    </span>
+                  </div>
+                  <span class="text-[11px] text-slate-500 mt-1">
+                    Formats acceptés : .pdf, .docx, .txt (analyse 100% locale)
+                  </span>
+                </label>
+              </div>
+
+              <!-- Séparateur "OU" -->
+              <div class="lg:col-span-1 flex items-center justify-center py-1 lg:py-0">
+                <div class="flex lg:flex-col items-center gap-2 w-full lg:w-auto justify-center">
+                  <span class="hidden lg:block w-px h-6 bg-slate-200" aria-hidden="true"></span>
+                  <span class="block lg:hidden flex-1 h-px bg-slate-200" aria-hidden="true"></span>
+                  <span class="text-[11px] font-bold text-slate-400 uppercase tracking-wider px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200">
+                    ou
+                  </span>
+                  <span class="block lg:hidden flex-1 h-px bg-slate-200" aria-hidden="true"></span>
+                  <span class="hidden lg:block w-px h-6 bg-slate-200" aria-hidden="true"></span>
+                </div>
+              </div>
+
+              <!-- Option B : Bouton Exemple Pré-rempli -->
+              <div class="lg:col-span-4 flex flex-col">
+                <div class="flex-1 flex flex-col items-center justify-center p-4 rounded-xl border border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/70 text-center transition-all min-h-[96px] shadow-sm">
+                  <button
+                    type="button"
+                    id="exampleBtn"
+                    class="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-slate-800 font-bold text-xs sm:text-sm shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-slate-400 w-full min-h-[44px]"
+                    title="Préremplir rapidement le formulaire avec un profil exemple"
+                  >
+                    <span aria-hidden="true">💡</span>
+                    <span>Remplir un exemple</span>
+                  </button>
+                  <span class="text-[11px] text-slate-500 mt-1">
+                    Développeur Fullstack (DROM / France)
+                  </span>
+                </div>
+              </div>
+
+            </div>
+
+            <!-- Carte Profil CV Actif (Affichée après analyse) -->
+            <div id="cvStatusBadge" class="hidden rounded-xl border border-emerald-200 bg-emerald-50/60 p-3.5 sm:p-4 shadow-sm transition-all" role="status" aria-live="polite">
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div class="flex items-center gap-2.5 min-w-0">
+                  <div class="w-8 h-8 rounded-lg bg-emerald-100 border border-emerald-200 flex items-center justify-center text-sm shrink-0" aria-hidden="true">
+                    ✅
+                  </div>
+                  <div class="min-w-0">
+                    <div class="flex items-center gap-2 flex-wrap">
+                      <span id="cvStatusText" class="text-xs sm:text-sm font-bold text-slate-900 truncate">CV analysé</span>
+                      <span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                        Profil actif
+                      </span>
+                    </div>
+                    <!-- Résumé rapide des compétences détectées -->
+                    <div id="cvQuickSummary" class="text-xs text-slate-600 flex flex-wrap gap-1.5 items-center mt-1"></div>
+                  </div>
+                </div>
+
+                <div class="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                  <label for="cvFileInput" class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold cursor-pointer shadow-sm transition-all focus-within:ring-2 focus-within:ring-indigo-500 min-h-[36px]" title="Remplacer le CV actuel">
+                    <span aria-hidden="true">🔄</span>
+                    <span>Remplacer</span>
+                  </label>
+                  <button
+                    type="button"
+                    id="clearCvBtn"
+                    class="inline-flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg border border-rose-200 bg-white hover:bg-rose-50 text-rose-700 text-xs font-semibold shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-rose-500 min-h-[36px]"
+                    aria-label="Retirer le CV"
+                    title="Retirer ce profil CV"
+                  >
+                    <span aria-hidden="true">🗑️</span>
+                    <span>Retirer</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Zone de retour d'analyse Groq : Points positifs & Points à améliorer -->
+            <div id="cvGroqFeedbackContainer" class="hidden rounded-xl border border-indigo-100 bg-white p-4 sm:p-5 shadow-sm space-y-3 transition-all" role="region" aria-label="Analyse détaillée du CV par Groq AI">
+              <div class="flex items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
+                <div class="flex items-center gap-2">
+                  <span class="w-7 h-7 rounded-lg bg-indigo-50 border border-indigo-200 flex items-center justify-center text-sm" aria-hidden="true">🎯</span>
+                  <div>
+                    <h4 class="text-xs sm:text-sm font-extrabold text-slate-900">
+                      Analyse RH &amp; Conseils de l'IA Groq
+                    </h4>
+                    <p class="text-[11px] text-slate-500">
+                      Évaluation des atouts majeurs et pistes concrètes d'optimisation de votre CV
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  id="toggleCvFeedbackBtn"
+                  class="text-xs text-indigo-600 hover:text-indigo-800 font-bold px-2.5 py-1 rounded-lg hover:bg-indigo-50 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  aria-expanded="true"
+                >
+                  Masquer
+                </button>
+              </div>
+
+              <!-- Grille des 2 colonnes : Points positifs & Points à améliorer -->
+              <div id="cvFeedbackGrid" class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+                
+                <!-- Colonne 1 : Points positifs -->
+                <div class="rounded-xl border border-emerald-200 bg-emerald-50/50 p-3.5 space-y-2">
+                  <div class="flex items-center gap-1.5 text-emerald-950 font-bold text-xs">
+                    <span class="text-sm" aria-hidden="true">✅</span>
+                    <h5>Points positifs du CV</h5>
+                  </div>
+                  <ul id="cvStrengthsList" class="space-y-1.5 text-xs text-emerald-900">
+                    <!-- Injecté dynamiquement par app.js -->
+                  </ul>
+                </div>
+
+                <!-- Colonne 2 : Points à améliorer -->
+                <div class="rounded-xl border border-amber-200 bg-amber-50/50 p-3.5 space-y-2">
+                  <div class="flex items-center gap-1.5 text-amber-950 font-bold text-xs">
+                    <span class="text-sm" aria-hidden="true">💡</span>
+                    <h5>Points à améliorer &amp; Conseils</h5>
+                  </div>
+                  <ul id="cvImprovementsList" class="space-y-1.5 text-xs text-amber-900">
+                    <!-- Injecté dynamiquement par app.js -->
+                  </ul>
+                </div>
+
+              </div>
+            </div>
+
+            <!-- Mention de réassurance RGPD & Confidentialité locale (Standards 2026) -->
+            <div class="pt-2 border-t border-slate-200/80 text-[11px] text-slate-500 flex flex-col sm:flex-row sm:items-center justify-between gap-2 leading-relaxed">
+              <div class="flex items-center gap-1.5">
+                <span class="text-emerald-600 text-sm leading-none" aria-hidden="true">🛡️</span>
+                <p>
+                  <strong class="text-slate-800 font-semibold">100% Local &amp; Confidentiel :</strong> Votre CV est analysé dans votre navigateur et n'est <strong>jamais stocké sur nos serveurs</strong>.
+                </p>
+              </div>
+              <a href="#disclaimer-ai-cv" class="text-indigo-600 hover:text-indigo-800 underline font-semibold focus:outline-none focus:ring-1 focus:ring-indigo-500 rounded shrink-0 inline-flex items-center gap-0.5">
+                <span>Détails stockage &amp; Groq AI</span>
+                <span aria-hidden="true">↗</span>
+              </a>
+            </div>
+          </div>
+
+          <!-- Étape 2 : Vos critères de recherche & Périmètre géographique -->
+          <div class="space-y-4">
+            <div class="flex items-center gap-2">
+              <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-indigo-600 text-white text-[11px] font-black" aria-hidden="true">2</span>
+              <h3 class="text-sm font-bold text-slate-900">
+                Étape 2 : Vos critères de recherche &amp; exclusions
+              </h3>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+              
+              <!-- Zone 1 : Ce qu'on cherche concrètement -->
+              <div class="flex flex-col space-y-2">
+                <div class="flex justify-between items-center">
+                  <label for="queryInput" class="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                    <span class="text-indigo-600" aria-hidden="true">🔍</span>
+                    <span>Ce que vous cherchez concrètement</span>
+                  </label>
+                  <span class="text-xs text-slate-500 font-medium bg-slate-100 px-2 py-0.5 rounded">
+                    Sauts de ligne autorisés
+                  </span>
+                </div>
+                <textarea
+                  id="queryInput"
+                  name="query"
+                  rows="4"
+                  aria-describedby="queryHelp"
+                  class="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm sm:text-base text-slate-900 placeholder:text-slate-400 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all resize-y min-h-[120px]"
+                  placeholder="Exemples :
+- Développeur Fullstack React / Node.js
+- Au moins 2 ans d'expérience
+- Télétravail complet ou hybride
+- Salaire cible > 45k€"
+                  required
+                ></textarea>
+                <p id="queryHelp" class="text-xs text-slate-600">
+                  Décrivez vos compétences, le poste visé, votre rythme de travail idéal et vos critères clés.
+                </p>
+              </div>
+
+              <!-- Zone 2 : Ce qu'on NE veut PAS dans les résultats -->
+              <div class="flex flex-col space-y-2">
+                <div class="flex justify-between items-center">
+                  <label for="exclusionsInput" class="text-sm font-bold text-rose-950 flex items-center gap-1.5">
+                    <span class="text-rose-600" aria-hidden="true">🚫</span>
+                    <span>Ce que vous ne voulez PAS dans les résultats</span>
+                  </label>
+                  <span class="text-xs text-rose-700 font-medium bg-rose-50 border border-rose-200 px-2 py-0.5 rounded">
+                    Exclusions prioritaires
+                  </span>
+                </div>
+                <textarea
+                  id="exclusionsInput"
+                  name="exclusions"
+                  rows="4"
+                  aria-describedby="exclusionsHelp"
+                  class="w-full rounded-xl border border-rose-200 bg-rose-50/40 px-4 py-3 text-sm sm:text-base text-slate-900 placeholder:text-rose-950/40 focus:border-rose-500 focus:outline-none focus:ring-2 focus:ring-rose-500/20 transition-all resize-y min-h-[120px]"
+                  placeholder="Exemples :
+- Pas de PHP ni de WordPress
+- Pas de stage ni d'alternance
+- Pas d'ESN ni de cabinet de prestation
+- Aucun poste 100% sur site"
+                ></textarea>
+                <p id="exclusionsHelp" class="text-xs text-slate-600">
+                  Ces critères seront identifiés par Groq pour classer et baliser clairement les offres non souhaitées.
+                </p>
+              </div>
+
+            </div>
+
+            <!-- Sélecteur Géographique Accessible (Radio Peers) -->
+            <fieldset class="rounded-xl border border-slate-200 bg-slate-50/80 p-4 sm:p-5 space-y-3">
+              <legend class="text-sm font-bold text-slate-900 flex items-center gap-2 px-1">
+                <span class="text-indigo-600" aria-hidden="true">📍</span>
+                <span>Périmètre Géographique ciblé :</span>
+              </legend>
+              <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                
+                <label class="relative flex items-center justify-center p-3 rounded-lg border border-slate-200 bg-white cursor-pointer hover:bg-slate-50 focus-within:ring-2 focus-within:ring-indigo-500 focus-within:border-indigo-500 transition-all shadow-sm">
+                  <input type="radio" name="geoRegion" value="all" checked class="peer sr-only" />
+                  <span class="text-xs sm:text-sm font-semibold text-slate-700 peer-checked:text-indigo-700 peer-checked:font-bold">
+                    🌐 Tous / Remote
+                  </span>
+                  <span class="absolute inset-0 rounded-lg border-2 border-transparent peer-checked:border-indigo-600 pointer-events-none" aria-hidden="true"></span>
+                </label>
+
+                <label class="relative flex items-center justify-center p-3 rounded-lg border border-slate-200 bg-white cursor-pointer hover:bg-slate-50 focus-within:ring-2 focus-within:ring-indigo-500 focus-within:border-indigo-500 transition-all shadow-sm">
+                  <input type="radio" name="geoRegion" value="drom" class="peer sr-only" />
+                  <span class="text-xs sm:text-sm font-semibold text-slate-700 peer-checked:text-indigo-700 peer-checked:font-bold text-center">
+                    🌴 DROM (974, 971...)
+                  </span>
+                  <span class="absolute inset-0 rounded-lg border-2 border-transparent peer-checked:border-indigo-600 pointer-events-none" aria-hidden="true"></span>
+                </label>
+
+                <label class="relative flex items-center justify-center p-3 rounded-lg border border-slate-200 bg-white cursor-pointer hover:bg-slate-50 focus-within:ring-2 focus-within:ring-indigo-500 focus-within:border-indigo-500 transition-all shadow-sm">
+                  <input type="radio" name="geoRegion" value="france" class="peer sr-only" />
+                  <span class="text-xs sm:text-sm font-semibold text-slate-700 peer-checked:text-indigo-700 peer-checked:font-bold">
+                    🇫🇷 France Métro
+                  </span>
+                  <span class="absolute inset-0 rounded-lg border-2 border-transparent peer-checked:border-indigo-600 pointer-events-none" aria-hidden="true"></span>
+                </label>
+
+                <label class="relative flex items-center justify-center p-3 rounded-lg border border-slate-200 bg-white cursor-pointer hover:bg-slate-50 focus-within:ring-2 focus-within:ring-indigo-500 focus-within:border-indigo-500 transition-all shadow-sm">
+                  <input type="radio" name="geoRegion" value="europe" class="peer sr-only" />
+                  <span class="text-xs sm:text-sm font-semibold text-slate-700 peer-checked:text-indigo-700 peer-checked:font-bold">
+                    🇪🇺 Europe
+                  </span>
+                  <span class="absolute inset-0 rounded-lg border-2 border-transparent peer-checked:border-indigo-600 pointer-events-none" aria-hidden="true"></span>
+                </label>
+
+              </div>
+            </fieldset>
+          </div>
+
+          <!-- Boutons d'action -->
+          <div class="flex flex-wrap items-center gap-3 pt-2">
+            <button
+              type="submit"
+              id="submitBtn"
+              class="inline-flex items-center justify-center gap-2 min-h-[48px] px-6 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-bold text-base shadow-sm hover:shadow-md transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <span aria-hidden="true">⚡</span>
+              <span>Lancer la recherche &amp; le scraping</span>
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <!-- Bannière d'aide API Groq / Jooble si clés manquantes -->
+      <div id="apiKeyBanner" class="hidden rounded-xl border border-amber-200 bg-amber-50/80 p-4 text-sm text-amber-900 flex items-start gap-3" role="alert">
+        <span class="text-xl leading-none text-amber-600" aria-hidden="true">💡</span>
+        <div class="space-y-1">
+          <strong class="font-bold">Mode Heuristique Actif</strong>
+          <p class="text-amber-800">
+            Pour activer la puissance maximale de l'intelligence artificielle Groq (Llama 3.3) et l'API Jooble, renseignez votre clé gratuite dans le fichier <code class="bg-amber-100 px-1 py-0.5 rounded text-xs font-mono text-amber-950">.env</code>.
+          </p>
+        </div>
+      </div>
+
+      <!-- État de chargement / Progression animée avec aria-live -->
+      <section id="progressSection" class="hidden" aria-live="polite">
+        <div class="bg-white rounded-2xl border border-slate-200 p-8 text-center space-y-6 shadow-sm max-w-xl mx-auto">
+          <div class="flex justify-center" aria-hidden="true">
+            <div class="w-12 h-12 rounded-full border-4 border-indigo-100 border-t-indigo-600 animate-spin"></div>
+          </div>
+          <div class="space-y-1">
+            <h3 id="progressTitle" class="text-lg font-bold text-slate-900">Recherche en cours...</h3>
+            <p id="progressSubtitle" class="text-sm text-slate-600">Initialisation de la requête</p>
+          </div>
+
+          <!-- Indicateur d'étapes accessible -->
+          <ol class="flex items-center justify-center gap-3 text-xs font-bold text-slate-500">
+            <li id="step1" class="flex items-center gap-1.5 text-indigo-600">
+              <span class="w-6 h-6 rounded-full bg-indigo-50 border border-indigo-200 flex items-center justify-center">1</span>
+              <span>Analyse Groq</span>
+            </li>
+            <li class="h-0.5 w-6 bg-slate-200" aria-hidden="true"></li>
+            <li id="step2" class="flex items-center gap-1.5">
+              <span class="w-6 h-6 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center">2</span>
+              <span>Scraping Web</span>
+            </li>
+            <li class="h-0.5 w-6 bg-slate-200" aria-hidden="true"></li>
+            <li id="step3" class="flex items-center gap-1.5">
+              <span class="w-6 h-6 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center">3</span>
+              <span>Tri & Filtrage</span>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <!-- Section des résultats -->
+      <section id="resultsSection" class="hidden space-y-6" aria-labelledby="results-header-title">
+        
+        <!-- Carte de synthèse des résultats et compteurs -->
+        <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-6">
+          
+          <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div>
+              <h2 id="resultsCountTitle" class="text-xl sm:text-2xl font-extrabold text-slate-900">
+                Offres d'emploi trouvées
+              </h2>
+              <p id="intentSummaryText" class="text-sm text-slate-600 mt-1"></p>
+            </div>
+
+            <!-- Compteurs statistiques accessibles -->
+            <div class="flex flex-wrap gap-2 sm:gap-3" role="region" aria-label="Statistiques de la recherche">
+              <div class="flex flex-col items-center px-4 py-2 rounded-xl bg-slate-100 border border-slate-200 min-w-[85px]">
+                <span id="statRaw" class="text-xl font-black text-slate-900">0</span>
+                <span class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Total</span>
+              </div>
+              <div class="flex flex-col items-center px-4 py-2 rounded-xl bg-emerald-50 border border-emerald-200 min-w-[85px]">
+                <span id="statKept" class="text-xl font-black text-emerald-700">0</span>
+                <span class="text-[11px] font-bold uppercase tracking-wider text-emerald-800">★ Retenues</span>
+              </div>
+              <div class="flex flex-col items-center px-4 py-2 rounded-xl bg-rose-50 border border-rose-200 min-w-[85px]">
+                <span id="statExcluded" class="text-xl font-black text-rose-700">0</span>
+                <span class="text-[11px] font-bold uppercase tracking-wider text-rose-800">⚠️ Exclues</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Lignes de Filtres : Provenance & Pertinence -->
+          <div class="space-y-3 pt-4 border-t border-slate-200 text-sm">
+            
+            <!-- Filtre par Provenance -->
+            <div class="flex flex-col sm:flex-row sm:items-center gap-2">
+              <span class="font-bold text-slate-700 min-w-[120px] flex items-center gap-1.5">
+                <span class="text-indigo-600" aria-hidden="true">📍</span>
+                <span>Provenance :</span>
+              </span>
+              <div id="sourceFiltersContainer" class="flex flex-wrap gap-1.5" role="group" aria-label="Filtrer par plateforme d'emploi">
+                <button type="button" class="px-3 py-1 rounded-full text-xs font-bold border border-indigo-600 bg-indigo-50 text-indigo-700 transition-all" data-source="all">
+                  Toutes
+                </button>
+              </div>
+            </div>
+
+            <!-- Filtre par Pertinence Recherche -->
+            <div class="flex flex-col sm:flex-row sm:items-center gap-2">
+              <span class="font-bold text-slate-700 min-w-[120px] flex items-center gap-1.5">
+                <span class="text-indigo-600" aria-hidden="true">🎯</span>
+                <span>Pertinence Groq :</span>
+              </span>
+              <div id="relevanceFiltersContainer" class="flex flex-wrap gap-1.5" role="group" aria-label="Filtrer par degré de pertinence de recherche">
+                <button type="button" class="filter-badge active px-3 py-1 rounded-full text-xs font-bold border border-indigo-600 bg-indigo-50 text-indigo-700 transition-all" data-relevance="all">
+                  Toutes
+                </button>
+                <button type="button" class="filter-badge px-3 py-1 rounded-full text-xs font-bold border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 transition-all" data-relevance="recommended">
+                  ★ Recommandées
+                </button>
+                <button type="button" class="filter-badge px-3 py-1 rounded-full text-xs font-bold border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 transition-all" data-relevance="excluded">
+                  ⚠️ Non recommandées
+                </button>
+              </div>
+            </div>
+
+            <!-- Filtre par Pertinence CV -->
+            <div id="cvFilterRow" class="hidden flex flex-col sm:flex-row sm:items-center gap-2">
+              <span class="font-bold text-slate-700 min-w-[120px] flex items-center gap-1.5">
+                <span class="text-emerald-600" aria-hidden="true">📄</span>
+                <span>Pertinence CV :</span>
+              </span>
+              <div id="cvRelevanceFiltersContainer" class="flex flex-wrap gap-1.5" role="group" aria-label="Filtrer par degré d'adéquation avec votre CV">
+                <button type="button" class="filter-badge active px-3 py-1 rounded-full text-xs font-bold border border-emerald-600 bg-emerald-50 text-emerald-800 transition-all" data-cv-relevance="all">
+                  Tous les scores
+                </button>
+                <button type="button" class="filter-badge px-3 py-1 rounded-full text-xs font-bold border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 transition-all" data-cv-relevance="high">
+                  ★ Match élevé (≥ 70%)
+                </button>
+                <button type="button" class="filter-badge px-3 py-1 rounded-full text-xs font-bold border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 transition-all" data-cv-relevance="mid">
+                  ✓ Match moyen (40-69%)
+                </button>
+                <button type="button" class="filter-badge px-3 py-1 rounded-full text-xs font-bold border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 transition-all" data-cv-relevance="low">
+                  ○ Match faible (&lt; 40%)
+                </button>
+              </div>
+            </div>
+
+            <!-- Filtre par Statut Utilisateur : Favoris, Désintéressés & Non marqués -->
+            <div id="userStatusFilterRow" class="flex flex-col sm:flex-row sm:items-center gap-2">
+              <span class="font-bold text-slate-700 min-w-[120px] flex items-center gap-1.5">
+                <span class="text-amber-500" aria-hidden="true">⭐</span>
+                <span>Vos sélections :</span>
+              </span>
+              <div id="userStatusFiltersContainer" class="flex flex-wrap gap-1.5" role="group" aria-label="Filtrer par favoris, désintéressé ou non marqués">
+                <button type="button" class="filter-badge active px-3 py-1 rounded-full text-xs font-bold border border-indigo-600 bg-indigo-50 text-indigo-700 transition-all" data-user-status="all">
+                  Toutes
+                </button>
+                <button type="button" class="filter-badge px-3 py-1 rounded-full text-xs font-bold border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 transition-all" data-user-status="unmarked" title="Afficher uniquement les offres non marquées (ni favori, ni désintéressé)">
+                  🆕 Non marquées (<span id="countUnmarked">0</span>)
+                </button>
+                <button type="button" class="filter-badge px-3 py-1 rounded-full text-xs font-bold border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 transition-all" data-user-status="favorite">
+                  ⭐ Favoris (<span id="countFavorites">0</span>)
+                </button>
+                <button type="button" class="filter-badge px-3 py-1 rounded-full text-xs font-bold border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 transition-all" data-user-status="dismissed">
+                  ✕ Désintéressés (<span id="countDismissed">0</span>)
+                </button>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Barre de recherche rapide, Tri & Commutateur de Vue (DataTable / Grille) -->
+          <div class="flex flex-col md:flex-row justify-between items-stretch md:items-center gap-3 pt-3 border-t border-slate-200">
+            <div class="w-full md:w-72">
+              <label for="quickFilterInput" class="sr-only">Rechercher dans les résultats</label>
+              <input
+                type="text"
+                id="quickFilterInput"
+                placeholder="Filtrer dans les résultats affichés..."
+                class="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+              />
+            </div>
+            
+            <div class="flex flex-wrap items-center justify-between md:justify-end gap-3">
+              <!-- Commutateur de Vue (DataTable vs Grille) -->
+              <div class="inline-flex items-center rounded-xl border border-slate-200 bg-slate-100 p-1 shadow-inner" role="group" aria-label="Mode d'affichage des offres">
+                <button
+                  type="button"
+                  id="viewModeTableBtn"
+                  class="view-mode-btn inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all bg-white text-indigo-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  aria-pressed="true"
+                  title="Affichage en tableau DataTable interactif"
+                >
+                  <span aria-hidden="true">☰</span>
+                  <span>DataTable</span>
+                </button>
+                <button
+                  type="button"
+                  id="viewModeGridBtn"
+                  class="view-mode-btn inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-600 hover:text-slate-900 transition-all focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  aria-pressed="false"
+                  title="Affichage en grille de cartes"
+                >
+                  <span aria-hidden="true">⊞</span>
+                  <span>Grille</span>
+                </button>
+              </div>
+
+              <!-- Tri -->
+              <div class="flex items-center gap-2">
+                <label for="sortBy" class="text-xs sm:text-sm font-semibold text-slate-600 whitespace-nowrap">
+                  Trier par :
+                </label>
+                <select
+                  id="sortBy"
+                  class="rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs sm:text-sm font-semibold text-slate-800 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
+                >
+                  <option value="score">Pertinence Groq (Recommandées d'abord)</option>
+                  <option value="cvScore">Adéquation CV (Meilleur profil)</option>
+                  <option value="date">Date de publication</option>
+                  <option value="company">Nom de l'entreprise</option>
+                  <option value="source">Provenance (Plateforme)</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Vue DataTable interactive -->
+        <div id="jobsTableContainer" class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden space-y-3">
+          <div class="overflow-x-auto">
+            <table id="jobsDataTable" class="w-full text-left text-sm text-slate-700 border-collapse">
+              <thead class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-600 uppercase tracking-wider select-none">
+                <tr>
+                  <th scope="col" class="py-3.5 px-4 w-28 text-center cursor-pointer hover:bg-slate-100 transition-colors" data-sort-col="status" title="Trier par statut (Non marqués en priorité)">
+                    <span class="inline-flex items-center gap-1 justify-center">
+                      <span>Statut</span>
+                      <span class="sort-icon text-[10px] text-slate-400">↕</span>
+                    </span>
+                  </th>
+                  <th scope="col" class="py-3.5 px-4 cursor-pointer hover:bg-slate-100 transition-colors" data-sort-col="title" title="Trier par poste">
+                    <span class="inline-flex items-center gap-1">
+                      <span>Poste &amp; Entreprise</span>
+                      <span class="sort-icon text-[10px] text-slate-400">↕</span>
+                    </span>
+                  </th>
+                  <th scope="col" class="py-3.5 px-4 cursor-pointer hover:bg-slate-100 transition-colors" data-sort-col="location" title="Trier par lieu">
+                    <span class="inline-flex items-center gap-1">
+                      <span>Lieu &amp; Contrat</span>
+                      <span class="sort-icon text-[10px] text-slate-400">↕</span>
+                    </span>
+                  </th>
+                  <th scope="col" class="py-3.5 px-4 w-32 cursor-pointer hover:bg-slate-100 transition-colors" data-sort-col="source" title="Trier par source">
+                    <span class="inline-flex items-center gap-1">
+                      <span>Source</span>
+                      <span class="sort-icon text-[10px] text-slate-400">↕</span>
+                    </span>
+                  </th>
+                  <th scope="col" class="py-3.5 px-4 w-28 text-center cursor-pointer hover:bg-slate-100 transition-colors" data-sort-col="groqScore" title="Trier par score Groq">
+                    <span class="inline-flex items-center gap-1 justify-center">
+                      <span>Score IA</span>
+                      <span class="sort-icon text-[10px] text-slate-400">↕</span>
+                    </span>
+                  </th>
+                  <th scope="col" class="py-3.5 px-4 w-28 text-center cursor-pointer hover:bg-slate-100 transition-colors" data-sort-col="cvScore" title="Trier par score CV">
+                    <span class="inline-flex items-center gap-1 justify-center">
+                      <span>Score CV</span>
+                      <span class="sort-icon text-[10px] text-slate-400">↕</span>
+                    </span>
+                  </th>
+                  <th scope="col" class="py-3.5 px-4 w-40 text-right">
+                    <span>Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody id="jobsTableBody" class="divide-y divide-slate-200">
+                <!-- Injecté dynamiquement par app.js -->
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Barre de Pagination DataTable -->
+          <div id="tablePaginationBar" class="p-3.5 sm:px-5 sm:py-3 bg-slate-50/70 border-t border-slate-200 flex flex-col sm:flex-row justify-between items-center gap-3 text-xs text-slate-600">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span>Afficher</span>
+              <select id="tablePageSizeSelect" class="rounded-lg border border-slate-300 bg-white px-2 py-1 font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer">
+                <option value="10">10</option>
+                <option value="25" selected>25</option>
+                <option value="50">50</option>
+                <option value="all">Tout</option>
+              </select>
+              <span>offres par page</span>
+              <span class="text-slate-400 ml-1">|</span>
+              <span id="tablePaginationInfo" class="font-medium text-slate-700 ml-1">Affichage de 0 à 0 sur 0</span>
+            </div>
+
+            <div class="flex items-center gap-1.5" role="navigation" aria-label="Pagination des offres">
+              <button
+                type="button"
+                id="tablePrevPageBtn"
+                class="px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 font-semibold text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                disabled
+              >
+                ◀ Précédent
+              </button>
+              <div id="tablePageNumbers" class="flex items-center gap-1"></div>
+              <button
+                type="button"
+                id="tableNextPageBtn"
+                class="px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 font-semibold text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                disabled
+              >
+                Suivant ▶
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Grille des cartes d'emploi -->
+        <div id="jobsGrid" class="hidden grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <!-- Injecté dynamiquement par app.js -->
+        </div>
+
+        <!-- État vide -->
+        <div id="emptyState" class="hidden bg-white rounded-2xl border border-slate-200 p-12 text-center space-y-3">
+          <div class="text-4xl" aria-hidden="true">🔎</div>
+          <h3 class="text-lg font-bold text-slate-900">Aucune offre ne correspond à ces critères</h3>
+          <p class="text-sm text-slate-600 max-w-md mx-auto">
+            Aucun résultat ne correspond aux filtres sélectionnés. Essayez d'élargir vos termes de recherche ou de retirer certains critères d'exclusion.
+          </p>
+        </div>
+
+      </section>
+    </main>
+
+    <!-- Pied de page accessible avec avertissement RGPD & Données Personnelles (*) -->
+    <footer id="disclaimer-ai-cv" class="pt-8 pb-6 border-t border-slate-200 space-y-4">
+      <div class="p-5 rounded-2xl bg-amber-50/80 border border-amber-300 text-xs text-amber-950 space-y-3 leading-relaxed shadow-sm" role="note" aria-label="Avertissement RGPD sur la récolte et le traitement des données à caractère personnel">
+        <div class="flex items-center gap-2 font-black text-amber-900 text-sm sm:text-base">
+          <span class="text-lg" aria-hidden="true">🔒</span>
+          <h4>* Attention : Récolte et traitement des données à caractère personnel (RGPD & IA)</h4>
+        </div>
+        
+        <p class="text-slate-800 text-xs sm:text-sm font-medium">
+          Lorsque vous utilisez le bouton <strong>« Adapter les critères avec Groq* »</strong>, votre document CV est analysé pour extraire automatiquement vos compétences. Ce traitement implique la manipulation de <strong>données à caractère personnel</strong> au sens du Règlement Général sur la Protection des Données (RGPD). Voici nos engagements pour garantir leur protection :
+        </p>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1 text-[11px] sm:text-xs">
+          
+          <div class="p-3.5 rounded-xl bg-white/95 border border-amber-200 space-y-1.5">
+            <h5 class="font-bold text-amber-950 flex items-center gap-1.5">
+              <span aria-hidden="true">📋</span> Données personnelles récoltées :
+            </h5>
+            <p class="text-slate-700 leading-normal">
+              Votre CV comporte des données identifiantes directes ou indirectes : nom, prénom, email, téléphone, ville de résidence, âge, permis de conduire, ainsi que l'ensemble de votre parcours académique et de vos expériences professionnelles passées.
+            </p>
+          </div>
+
+          <div class="p-3.5 rounded-xl bg-white/95 border border-amber-200 space-y-1.5">
+            <h5 class="font-bold text-amber-950 flex items-center gap-1.5">
+              <span aria-hidden="true">🤖</span> Traitement éphémère par l'IA (Groq) :
+            </h5>
+            <p class="text-slate-700 leading-normal">
+              Le contenu textuel de votre CV est transmis de manière sécurisée (chiffrement TLS) à l'API de Groq uniquement pour une inférence sémantique immédiate. Les données ne sont <strong>ni conservées par Groq, ni commercialisées, ni réutilisées pour réentraîner des modèles d'IA publics</strong>. Pour consulter les engagements juridiques et la politique de sauvegarde et de traitement des données de Groq : <a href="https://console.groq.com/docs/legal/archive/" target="_blank" rel="noopener noreferrer" class="text-indigo-600 hover:text-indigo-800 underline font-semibold focus:outline-none focus:ring-1 focus:ring-indigo-500 rounded inline-flex items-center gap-1">Documentation légale Groq <span aria-hidden="true">↗</span></a>.
+            </p>
+          </div>
+
+          <div class="p-3.5 rounded-xl bg-white/95 border border-amber-200 space-y-1.5">
+            <h5 class="font-bold text-amber-950 flex items-center gap-1.5">
+              <span aria-hidden="true">💻</span> Zéro traitement & zéro stockage serveur :
+            </h5>
+            <p class="text-slate-700 leading-normal">
+              <strong>Vos données (cookies, localStorage, IndexedDB) ne sont ni traitées ni stockées sur nos serveurs.</strong> Aucune base de données (SQL, NoSQL) ni fichier de journalisation personnelle n'existe côté serveur. Toutes vos informations résident exclusivement dans la mémoire locale de votre navigateur.
+            </p>
+          </div>
+
+          <div class="p-3.5 rounded-xl bg-white/95 border border-amber-200 space-y-1.5">
+            <h5 class="font-bold text-amber-950 flex items-center gap-1.5">
+              <span aria-hidden="true">🛠️</span> Supprimable et éditable via « Inspecter » &gt; « Appli » :
+            </h5>
+            <p class="text-slate-700 leading-normal">
+              Vous gardez la souveraineté totale. Vos données sont <strong>supprimables et éditables à tout moment</strong> : via le bouton <em>« Vider le cache »</em> ou directement via les outils pour développeurs de votre navigateur (<kbd class="bg-slate-100 border border-slate-300 px-1 py-0.5 rounded text-[10px] font-mono text-slate-800">F12</kbd> ou clic droit &gt; <strong>« Inspecter »</strong> &gt; onglet <strong>« Application »</strong> ou <strong>« Stockage »</strong> &gt; rubriques <em>Cookies</em>, <em>Local Storage</em> et <em>IndexedDB</em>).
+            </p>
+          </div>
+
+        </div>
+
+      </div>
+      <p class="text-center text-xs text-slate-500">
+        FindTheJob • Développé en conformité avec les critères d'accessibilité RGAA & WCAG 2.1 AA • Respect strict du RGPD et du principe de minimisation des données
+      </p>
+    </footer>
+
+  </div>
+
+  <!-- Pop-up Modal : Résumé IA & Tips pour postuler (Conforme WCAG / RGAA) -->
+  <div
+    id="jobModal"
+    class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-900/60 backdrop-blur-sm transition-opacity"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="modalJobTitle"
+  >
+    <div class="relative w-full max-w-2xl max-h-[90vh] bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-y-auto flex flex-col focus:outline-none" tabindex="-1">
+      
+      <!-- Bouton de fermeture accessible (min 44x44px) -->
+      <button
+        type="button"
+        id="modalCloseBtn"
+        class="absolute top-4 right-4 w-11 h-11 flex items-center justify-center rounded-full text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-600 text-2xl font-bold"
+        aria-label="Fermer la fenêtre d'analyse de l'offre"
+      >
+        &times;
+      </button>
+
+      <!-- État de chargement de la modale -->
+      <div id="modalLoading" class="hidden p-12 flex flex-col items-center justify-center text-center space-y-4">
+        <div class="w-12 h-12 rounded-full border-4 border-indigo-100 border-t-indigo-600 animate-spin" aria-hidden="true"></div>
+        <div class="space-y-1">
+          <h3 class="text-lg font-bold text-slate-900">Analyse détaillée de l'offre par Groq...</h3>
+          <p class="text-sm text-slate-600">Lecture de la fiche de poste et génération de vos conseils de candidature</p>
+        </div>
+      </div>
+
+      <!-- Contenu de l'analyse injecté par JS -->
+      <div id="modalContent" class="p-6 sm:p-8 space-y-6"></div>
+
+    </div>
+  </div>
+
+  <!-- Pop-up Modal : Modifier les critères extraits du CV (Conforme WCAG / RGAA) -->
+  <div
+    id="cvCriteriaModal"
+    class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-900/60 backdrop-blur-sm transition-opacity"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="cvCriteriaModalTitle"
+  >
+    <div class="relative w-full max-w-2xl max-h-[90vh] bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-y-auto flex flex-col focus:outline-none" tabindex="-1">
+      
+      <!-- Bouton de fermeture accessible (min 44x44px) -->
+      <button
+        type="button"
+        id="cvCriteriaCloseBtn"
+        class="absolute top-4 right-4 w-11 h-11 flex items-center justify-center rounded-full text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-600 text-2xl font-bold"
+        aria-label="Fermer la fenêtre de modification des critères"
+      >
+        &times;
+      </button>
+
+      <div class="p-6 sm:p-8 space-y-6">
+        
+        <!-- En-tête de la modale -->
+        <div class="border-b border-slate-200 pb-4 pr-8 space-y-1">
+          <div class="flex items-center gap-2">
+            <span id="cvModalBadge" class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+              Profil Candidat
+            </span>
+          </div>
+          <h2 id="cvCriteriaModalTitle" class="text-xl sm:text-2xl font-extrabold text-slate-900">
+            Modifier les critères extraits du CV
+          </h2>
+          <p class="text-xs sm:text-sm text-slate-600">
+            Corrigez ou enrichissez les informations détectées pour affiner le calcul de pertinence CV par rapport aux offres d'emploi.
+          </p>
+        </div>
+
+        <!-- Résumé feedback Groq dans la modale (affiché si adapté avec Groq) -->
+        <div id="modalCvFeedbackBanner" class="hidden rounded-xl border border-indigo-100 bg-indigo-50/40 p-3.5 space-y-2 text-xs">
+          <div class="flex items-center gap-1.5 font-bold text-indigo-950 text-xs">
+            <span aria-hidden="true">✨</span>
+            <span>Conseils RH identifiés par l'IA Groq :</span>
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-[11px]">
+            <div class="p-2.5 rounded-lg bg-white border border-emerald-200 space-y-1">
+              <strong class="text-emerald-800 flex items-center gap-1 font-bold">
+                <span aria-hidden="true">✅</span> Points positifs :
+              </strong>
+              <ul id="modalCvStrengthsList" class="space-y-1 text-emerald-900 list-disc pl-4"></ul>
+            </div>
+            <div class="p-2.5 rounded-lg bg-white border border-amber-200 space-y-1">
+              <strong class="text-amber-800 flex items-center gap-1 font-bold">
+                <span aria-hidden="true">💡</span> Points à améliorer :
+              </strong>
+              <ul id="modalCvImprovementsList" class="space-y-1 text-amber-900 list-disc pl-4"></ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Formulaire des critères -->
+        <form id="cvCriteriaForm" class="space-y-5">
+          
+          <!-- 1. Formations -->
+          <div class="space-y-1.5">
+            <label for="cvFormationsInput" class="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+              <span>🎓</span> Formations
+            </label>
+            <textarea
+              id="cvFormationsInput"
+              rows="2"
+              class="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+              placeholder="Ex : Master Informatique, Licence Pro Développement Web, BTS SIO..."
+            ></textarea>
+            <p class="text-[11px] text-slate-500">Diplômes, universités, écoles ou niveaux d'études.</p>
+          </div>
+
+          <!-- 2. Expérience pro -->
+          <div class="space-y-1.5">
+            <label for="cvExperienceInput" class="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+              <span>💼</span> Expérience pro
+            </label>
+            <textarea
+              id="cvExperienceInput"
+              rows="3"
+              class="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+              placeholder="Ex : Développeur Fullstack React / Node (3 ans), Stage Développeur Web..."
+            ></textarea>
+            <p class="text-[11px] text-slate-500">Postes précédents, intitulé de poste visé et durée d'expérience.</p>
+          </div>
+
+          <!-- 3. Soft skills -->
+          <div class="space-y-1.5">
+            <label for="cvSoftSkillsInput" class="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+              <span>🤝</span> Soft skills
+            </label>
+            <textarea
+              id="cvSoftSkillsInput"
+              rows="2"
+              class="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+              placeholder="Ex : Autonomie, Rigueur, Travail en équipe, Adaptabilité, Communication..."
+            ></textarea>
+            <p class="text-[11px] text-slate-500">Qualités relationnelles et compétences comportementales.</p>
+          </div>
+
+          <!-- 4. Logiciels -->
+          <div class="space-y-1.5">
+            <label for="cvLogicielsInput" class="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+              <span>💻</span> Logiciels & Technologies
+            </label>
+            <textarea
+              id="cvLogicielsInput"
+              rows="3"
+              class="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 font-mono text-xs sm:text-sm"
+              placeholder="Ex : JavaScript, TypeScript, React, Node.js, Python, Docker, Git, PostgreSQL, Excel, Figma..."
+            ></textarea>
+            <p class="text-[11px] text-slate-500">Langages, frameworks, bases de données, outils cloud et logiciels (séparés par des virgules).</p>
+          </div>
+
+          <!-- 5. Âge, Lieux, Véhiculé ou pas -->
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2 border-t border-slate-100">
+            
+            <!-- Âge -->
+            <div class="space-y-1.5">
+              <label for="cvAgeInput" class="text-xs font-bold text-slate-900">
+                🎂 Âge
+              </label>
+              <input
+                type="text"
+                id="cvAgeInput"
+                class="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                placeholder="Ex : 28 ans"
+              />
+            </div>
+
+            <!-- Lieux -->
+            <div class="space-y-1.5">
+              <label for="cvLieuxInput" class="text-xs font-bold text-slate-900">
+                📍 Lieux
+              </label>
+              <input
+                type="text"
+                id="cvLieuxInput"
+                class="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                placeholder="Ex : 97400 Saint-Denis, Paris..."
+              />
+            </div>
+
+            <!-- Véhiculé ou pas -->
+            <div class="space-y-1.5">
+              <label for="cvVehiculeInput" class="text-xs font-bold text-slate-900">
+                🚗 Véhiculé ou pas
+              </label>
+              <select
+                id="cvVehiculeInput"
+                class="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs sm:text-sm font-semibold text-slate-900 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
+              >
+                <option value="true">Oui (Véhiculé / Permis B)</option>
+                <option value="false">Non (Non véhiculé)</option>
+              </select>
+            </div>
+
+          </div>
+
+          <!-- Actions Modale -->
+          <div class="pt-4 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3">
+            <span class="text-xs text-slate-500 flex items-center gap-1" title="Aucun stockage serveur. Modifiables et supprimables dans l'outil Inspecter > Application">
+              <span aria-hidden="true">🔒</span> Données 100% locales (aucun stockage serveur, modifiables via « Inspecter » &gt; « Appli »)
+            </span>
+            <div class="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto">
+              <button
+                type="button"
+                id="cancelCvCriteriaBtn"
+                class="w-full sm:w-auto px-4 py-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-semibold text-sm transition-all focus:outline-none focus:ring-2 focus:ring-slate-400 min-h-[44px]"
+              >
+                Annuler
+              </button>
+              <button
+                type="submit"
+                id="saveCvCriteriaBtn"
+                class="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 min-h-[44px]"
+              >
+                Enregistrer & Recalculer la pertinence CV
+              </button>
+            </div>
+          </div>
+
+        </form>
+
+      </div>
+
+    </div>
+  </div>
+
+  <script src="storageManager.js"></script>
+  <script src="cvParser.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
