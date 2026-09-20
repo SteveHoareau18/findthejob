@@ -42,6 +42,8 @@
     }
   </script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+  <!-- JSZip pour la compression et décompression d'archives ZIP 100% en mémoire -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 </head>
 <body class="min-h-full font-sans text-slate-800 antialiased flex flex-col justify-between">
 
@@ -86,6 +88,19 @@
           <span id="cacheStatusDot" class="w-2.5 h-2.5 rounded-full bg-slate-400" aria-hidden="true"></span>
           <span id="cacheStatusText">Aucune donnée locale</span>
         </div>
+
+        <!-- Bouton Voir mes candidatures -->
+        <button
+          type="button"
+          id="openCandidaturesBtn"
+          class="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-sm hover:shadow transition-all focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-indigo-500 min-h-[38px]"
+          title="Gérer vos candidatures, planifier des entretiens et exporter vers votre agenda (.ics)"
+          aria-label="Voir mes candidatures et mes entretiens"
+        >
+          <span aria-hidden="true">📋</span>
+          <span>Voir mes candidatures</span>
+          <span id="headerCandidaturesBadge" class="inline-flex items-center justify-center px-1.5 py-0.2 rounded-full text-[10px] font-black bg-indigo-800 text-white">0</span>
+        </button>
 
         <!-- Bouton Enregistrer / Prolonger 7j -->
         <button
@@ -613,6 +628,25 @@
               </div>
             </div>
 
+            <!-- Filtre par Candidature (Postulées / Non postulées) -->
+            <div id="candidatureFilterRow" class="flex flex-col sm:flex-row sm:items-center gap-2">
+              <span class="font-bold text-slate-700 min-w-[120px] flex items-center gap-1.5">
+                <span class="text-indigo-600" aria-hidden="true">📨</span>
+                <span>Candidatures :</span>
+              </span>
+              <div id="candidatureFiltersContainer" class="flex flex-wrap gap-1.5" role="group" aria-label="Filtrer par offres postulées ou non postulées">
+                <button type="button" class="filter-badge active px-3 py-1 rounded-full text-xs font-bold border border-indigo-600 bg-indigo-50 text-indigo-700 transition-all" data-candidature-status="all">
+                  Toutes
+                </button>
+                <button type="button" class="filter-badge px-3 py-1 rounded-full text-xs font-bold border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 transition-all" data-candidature-status="unapplied" title="Afficher uniquement les offres non encore postulées">
+                  ⏳ Non postulées (<span id="countUnapplied">0</span>)
+                </button>
+                <button type="button" class="filter-badge px-3 py-1 rounded-full text-xs font-bold border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 transition-all" data-candidature-status="applied" title="Afficher uniquement les offres auxquelles vous avez postulé">
+                  ✅ Postulées (<span id="countApplied">0</span>)
+                </button>
+              </div>
+            </div>
+
           </div>
 
           <!-- Barre de recherche rapide, Tri & Commutateur de Vue (DataTable / Grille) -->
@@ -1068,7 +1102,656 @@
     </div>
   </div>
 
+  <!-- Pop-up Modal Principale : Suivi des Candidatures, Entretiens & Calendrier (Conforme WCAG / RGAA) -->
+  <div
+    id="candidaturesModal"
+    class="hidden fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-900/60 backdrop-blur-sm transition-opacity"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="candidaturesModalTitle"
+  >
+    <div class="relative w-full max-w-5xl max-h-[92vh] bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-hidden flex flex-col focus:outline-none" tabindex="-1">
+      
+      <!-- En-tête Modale -->
+      <div class="p-5 sm:p-6 border-b border-slate-200 bg-slate-50/70 flex flex-col gap-4">
+        <div class="flex items-start justify-between gap-3">
+          <div class="space-y-1">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="w-8 h-8 rounded-xl bg-indigo-100 border border-indigo-200 flex items-center justify-center text-base" aria-hidden="true">📋</span>
+              <h2 id="candidaturesModalTitle" class="text-xl sm:text-2xl font-extrabold text-slate-900">
+                Suivi de mes Candidatures &amp; Entretiens
+              </h2>
+              <span id="modalCandidaturesTotalBadge" class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                0 candidature
+              </span>
+            </div>
+            <p class="text-xs sm:text-sm text-slate-600">
+              Gérez l'avancement de vos démarches, planifiez vos entretiens et exportez tout en 1 clic vers votre agenda.
+            </p>
+          </div>
+
+          <!-- Bouton Fermer (min 44x44px pour l'accessibilité) -->
+          <button
+            type="button"
+            id="closeCandidaturesModalBtn"
+            class="w-11 h-11 flex items-center justify-center rounded-xl text-slate-500 hover:text-slate-800 hover:bg-slate-200/70 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-600 text-2xl font-bold shrink-0"
+            aria-label="Fermer la fenêtre de gestion des candidatures"
+          >
+            &times;
+          </button>
+        </div>
+
+        <!-- Barre d'outils : Onglets Vue (Liste / Calendrier) & Actions (Export ZIP, Import, Ajout) -->
+        <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2 border-t border-slate-200/80">
+          
+          <!-- Bascule Vue Liste / Vue Calendrier -->
+          <div class="inline-flex items-center rounded-xl border border-slate-200 bg-slate-100 p-1 shadow-inner self-start" role="tablist" aria-label="Mode de vue des candidatures">
+            <button
+              type="button"
+              id="candTabListBtn"
+              class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all bg-white text-indigo-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[34px]"
+              role="tab"
+              aria-selected="true"
+              aria-controls="candListView"
+            >
+              <span aria-hidden="true">📋</span>
+              <span>Vue Liste</span>
+            </button>
+            <button
+              type="button"
+              id="candTabCalendarBtn"
+              class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold text-slate-600 hover:text-slate-900 transition-all focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[34px]"
+              role="tab"
+              aria-selected="false"
+              aria-controls="candCalendarView"
+            >
+              <span aria-hidden="true">📅</span>
+              <span>Vue Calendrier</span>
+            </button>
+          </div>
+
+          <!-- Boutons Actions Globales : Export ZIP, Import, Ajout -->
+          <div class="flex items-center gap-2 flex-wrap">
+            
+            <!-- Input file caché pour l'import d'archive ZIP ou JSON -->
+            <input type="file" id="importArchiveFileInput" accept=".zip,.json" class="sr-only" />
+
+            <!-- Bouton Importer -->
+            <button
+              type="button"
+              id="importArchiveBtn"
+              class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs shadow-2xs transition-all focus:outline-none focus:ring-2 focus:ring-slate-400 min-h-[36px]"
+              title="Importer une sauvegarde complète (.zip ou .json)"
+              aria-label="Importer des données de candidatures"
+            >
+              <span aria-hidden="true">📥</span>
+              <span>Importer</span>
+            </button>
+
+            <!-- Bouton Exporter Tout en 1 Clic (Archive ZIP : Calendrier .ics + Données .json) -->
+            <button
+              type="button"
+              id="exportArchiveZipBtn"
+              class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl border border-emerald-600 bg-emerald-50 hover:bg-emerald-600 hover:text-white text-emerald-800 font-bold text-xs shadow-2xs transition-all focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-emerald-500 min-h-[36px]"
+              title="Exporter toutes les données et le calendrier d'entretiens dans un fichier .zip tout-en-un"
+              aria-label="Exporter les données et le calendrier en archive ZIP"
+            >
+              <span aria-hidden="true">📦</span>
+              <span>Exporter (.zip)</span>
+            </button>
+
+            <!-- Bouton Ajouter une candidature manuelle -->
+            <button
+              type="button"
+              id="addManualCandBtn"
+              class="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-2xs transition-all focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[36px]"
+              title="Ajouter une candidature pour une offre externe"
+            >
+              <span aria-hidden="true">➕</span>
+              <span>Ajouter</span>
+            </button>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Corps de la Modale avec défilement -->
+      <div class="p-5 sm:p-6 overflow-y-auto flex-1 space-y-5">
+        
+        <!-- Filtres internes par statut -->
+        <div class="flex items-center justify-between gap-3 flex-wrap border-b border-slate-100 pb-3">
+          <div id="modalStatusFilterBar" class="flex items-center gap-1.5 flex-wrap text-xs" role="group" aria-label="Filtrer les candidatures par statut">
+            <button type="button" class="modal-status-filter active px-3 py-1 rounded-full font-bold border border-indigo-600 bg-indigo-50 text-indigo-700" data-modal-status="all">
+              Toutes
+            </button>
+            <button type="button" class="modal-status-filter px-3 py-1 rounded-full font-semibold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50" data-modal-status="En attente de réponse">
+              ⏳ En attente (<span id="candCountWaiting">0</span>)
+            </button>
+            <button type="button" class="modal-status-filter px-3 py-1 rounded-full font-semibold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50" data-modal-status="Entretien x">
+              🎙️ Entretiens (<span id="candCountInterview">0</span>)
+            </button>
+            <button type="button" class="modal-status-filter px-3 py-1 rounded-full font-semibold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50" data-modal-status="Accepté">
+              🎉 Accepté (<span id="candCountAccepted">0</span>)
+            </button>
+            <button type="button" class="modal-status-filter px-3 py-1 rounded-full font-semibold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50" data-modal-status="Non abouti">
+              ✕ Non abouti (<span id="candCountRejected">0</span>)
+            </button>
+          </div>
+          <div id="modalActionNotification" class="text-xs font-semibold text-emerald-700 hidden" role="status" aria-live="polite"></div>
+        </div>
+
+        <!-- ================= ONGLET 1 : VUE LISTE ================= -->
+        <div id="candListView" class="space-y-4" role="tabpanel" aria-labelledby="candTabListBtn">
+          
+          <!-- État vide si aucune candidature -->
+          <div id="candEmptyState" class="hidden rounded-2xl border-2 border-dashed border-slate-200 p-10 text-center space-y-3">
+            <div class="text-4xl" aria-hidden="true">📭</div>
+            <h3 class="text-base sm:text-lg font-bold text-slate-800">Aucune candidature pour le moment</h3>
+            <p class="text-xs sm:text-sm text-slate-500 max-w-md mx-auto">
+              Cliquez sur le bouton <strong>« Postuler »</strong> d'une offre pour l'ajouter automatiquement ici avec sa date, ou cliquez sur <strong>« ➕ Ajouter »</strong> pour renseigner une démarche spontanée.
+            </p>
+          </div>
+
+          <!-- Conteneur des cartes de candidatures -->
+          <div id="candidaturesCardsContainer" class="space-y-3">
+            <!-- Injecté dynamiquement par app.js -->
+          </div>
+
+        </div>
+
+        <!-- ================= ONGLET 2 : VUE CALENDRIER ================= -->
+        <div id="candCalendarView" class="hidden space-y-5" role="tabpanel" aria-labelledby="candTabCalendarBtn">
+          
+          <!-- Barre de Navigation du Mois -->
+          <div class="flex items-center justify-between gap-3 p-3 rounded-xl bg-slate-50 border border-slate-200">
+            <div class="flex items-center gap-2">
+              <button
+                type="button"
+                id="calPrevMonthBtn"
+                class="w-9 h-9 flex items-center justify-center rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 font-bold text-sm shadow-2xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                aria-label="Mois précédent"
+              >
+                ◀
+              </button>
+              <h3 id="calMonthYearLabel" class="text-base sm:text-lg font-extrabold text-slate-900 min-w-[160px] text-center capitalize">
+                Mois Année
+              </h3>
+              <button
+                type="button"
+                id="calNextMonthBtn"
+                class="w-9 h-9 flex items-center justify-center rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 font-bold text-sm shadow-2xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                aria-label="Mois suivant"
+              >
+                ▶
+              </button>
+            </div>
+
+            <div class="flex items-center gap-2">
+              <button
+                type="button"
+                id="calTodayBtn"
+                class="px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 font-semibold text-xs shadow-2xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                Aujourd'hui
+              </button>
+              <span class="text-xs text-slate-500 hidden sm:inline">
+                💡 Cliquez sur un jour pour voir le détail
+              </span>
+            </div>
+          </div>
+
+          <!-- Grille du calendrier -->
+          <div class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+            <!-- En-tête des jours de la semaine -->
+            <div class="grid grid-cols-7 border-b border-slate-200 bg-slate-50 text-center text-xs font-bold text-slate-600 uppercase tracking-wider py-2.5">
+              <span>Lun</span>
+              <span>Mar</span>
+              <span>Mer</span>
+              <span>Jeu</span>
+              <span>Ven</span>
+              <span class="text-indigo-600 font-extrabold">Sam</span>
+              <span class="text-indigo-600 font-extrabold">Dim</span>
+            </div>
+
+            <!-- Grille des cases jours -->
+            <div id="calendarDaysGrid" class="grid grid-cols-7 divide-x divide-y divide-slate-100 min-h-[380px]">
+              <!-- Injecté dynamiquement par app.js -->
+            </div>
+          </div>
+
+          <!-- Panneau d'inspection d'un jour sélectionné -->
+          <div id="calendarDayInspector" class="hidden rounded-xl border border-indigo-100 bg-indigo-50/40 p-4 space-y-3">
+            <div class="flex items-center justify-between gap-2 border-b border-indigo-100 pb-2">
+              <h4 id="calendarInspectorDateTitle" class="text-sm font-bold text-indigo-950 flex items-center gap-2">
+                <span>📅</span>
+                <span>Événements du jour</span>
+              </h4>
+              <button
+                type="button"
+                id="closeCalendarInspectorBtn"
+                class="text-xs text-indigo-600 hover:text-indigo-900 font-bold"
+              >
+                Fermer
+              </button>
+            </div>
+            <div id="calendarInspectorEventsList" class="space-y-2 text-xs"></div>
+          </div>
+
+        </div>
+
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Pop-up Modal : Ajouter / Modifier un Entretien (Conforme WCAG / RGAA) -->
+  <div
+    id="interviewModal"
+    class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm transition-opacity"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="interviewModalTitle"
+  >
+    <div class="relative w-full max-w-lg bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-y-auto max-h-[90vh] flex flex-col focus:outline-none" tabindex="-1">
+      
+      <!-- Bouton fermer -->
+      <button
+        type="button"
+        id="closeInterviewModalBtn"
+        class="absolute top-4 right-4 w-10 h-10 flex items-center justify-center rounded-full text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-600 text-2xl font-bold"
+        aria-label="Fermer la planification de l'entretien"
+      >
+        &times;
+      </button>
+
+      <div class="p-6 space-y-5">
+        <div class="border-b border-slate-200 pb-3 pr-8 space-y-1">
+          <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+            Agenda &amp; .ics
+          </span>
+          <h3 id="interviewModalTitle" class="text-lg font-extrabold text-slate-900">
+            Planifier un entretien
+          </h3>
+          <p id="interviewModalJobSubtitle" class="text-xs text-slate-600 font-medium truncate">
+            Entreprise - Poste
+          </p>
+        </div>
+
+        <form id="interviewForm" class="space-y-4 text-xs sm:text-sm">
+          <input type="hidden" id="interviewCandJobId" />
+          <input type="hidden" id="interviewEditId" />
+
+          <!-- Étape / Titre de l'entretien -->
+          <div class="space-y-1">
+            <label for="interviewTitleInput" class="font-bold text-slate-900 flex items-center gap-1.5">
+              <span>🎙️</span>
+              <span>Étape / Intitulé de l'entretien</span>
+            </label>
+            <input
+              type="text"
+              id="interviewTitleInput"
+              required
+              placeholder="Ex : Entretien 1 - RH, Test technique, Échange Manager..."
+              class="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-slate-900 placeholder:text-slate-400 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+            />
+          </div>
+
+          <!-- Date et Heure -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div class="space-y-1">
+              <label for="interviewDateInput" class="font-bold text-slate-900 flex items-center gap-1.5">
+                <span>📅</span>
+                <span>Date de l'entretien</span>
+              </label>
+              <input
+                type="date"
+                id="interviewDateInput"
+                required
+                class="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-slate-900 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+              />
+            </div>
+            <div class="space-y-1">
+              <label for="interviewTimeInput" class="font-bold text-slate-900 flex items-center gap-1.5">
+                <span>⏰</span>
+                <span>Heure</span>
+              </label>
+              <input
+                type="time"
+                id="interviewTimeInput"
+                value="10:00"
+                required
+                class="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-slate-900 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+              />
+            </div>
+          </div>
+
+          <!-- Format et Durée -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div class="space-y-1">
+              <label for="interviewTypeInput" class="font-bold text-slate-900 flex items-center gap-1.5">
+                <span>💻</span>
+                <span>Format</span>
+              </label>
+              <select
+                id="interviewTypeInput"
+                class="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-slate-900 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+              >
+                <option value="visio">Visio (Teams, Meet, Zoom...)</option>
+                <option value="telephone">Téléphone</option>
+                <option value="presentiel">Présentiel (Sur site)</option>
+                <option value="autre">Autre</option>
+              </select>
+            </div>
+            <div class="space-y-1">
+              <label for="interviewDurationInput" class="font-bold text-slate-900 flex items-center gap-1.5">
+                <span>⏳</span>
+                <span>Durée prévue (.ics)</span>
+              </label>
+              <select
+                id="interviewDurationInput"
+                class="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-slate-900 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+              >
+                <option value="30">30 minutes</option>
+                <option value="45">45 minutes</option>
+                <option value="60" selected>1 heure</option>
+                <option value="90">1 heure 30</option>
+                <option value="120">2 heures</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Lien Visio ou Lieu -->
+          <div class="space-y-1">
+            <label for="interviewLocationInput" class="font-bold text-slate-900 flex items-center gap-1.5">
+              <span>📍</span>
+              <span>Lien Visio ou Adresse physique</span>
+            </label>
+            <input
+              type="text"
+              id="interviewLocationInput"
+              placeholder="Ex : https://meet.google.com/xyz ou 12 rue de la Paix, Paris"
+              class="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-slate-900 placeholder:text-slate-400 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+            />
+          </div>
+
+          <!-- Interlocuteur / Contact -->
+          <div class="space-y-1">
+            <label for="interviewInterviewerInput" class="font-bold text-slate-900 flex items-center gap-1.5">
+              <span>👤</span>
+              <span>Contact / Recruteur</span>
+            </label>
+            <input
+              type="text"
+              id="interviewInterviewerInput"
+              placeholder="Ex : Sophie Martin (Talent Acquisition) - 06 12 34 56 78"
+              class="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-slate-900 placeholder:text-slate-400 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+            />
+          </div>
+
+          <!-- Notes préparatoires -->
+          <div class="space-y-1">
+            <label for="interviewNotesInput" class="font-bold text-slate-900 flex items-center gap-1.5">
+              <span>📝</span>
+              <span>Notes &amp; Questions à poser</span>
+            </label>
+            <textarea
+              id="interviewNotesInput"
+              rows="2"
+              placeholder="Ex : Présentation du projet X, questionner sur l'ambiance d'équipe et le télétravail..."
+              class="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-slate-900 placeholder:text-slate-400 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 resize-y"
+            ></textarea>
+          </div>
+
+          <!-- Boutons de validation -->
+          <div class="pt-3 border-t border-slate-200 flex items-center justify-end gap-2.5">
+            <button
+              type="button"
+              id="cancelInterviewModalBtn"
+              class="px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-semibold text-xs transition-all focus:outline-none focus:ring-2 focus:ring-slate-400 min-h-[40px]"
+            >
+              Annuler
+            </button>
+            <button
+              type="submit"
+              id="saveInterviewSubmitBtn"
+              class="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 min-h-[40px]"
+            >
+              Enregistrer l'entretien
+            </button>
+          </div>
+        </form>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Pop-up Modal : Ajouter une Candidature Spontanée / Externe -->
+  <div
+    id="manualCandModal"
+    class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm transition-opacity"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="manualCandModalTitle"
+  >
+    <div class="relative w-full max-w-md bg-white rounded-2xl border border-slate-200 shadow-2xl p-6 space-y-4 focus:outline-none" tabindex="-1">
+      <div class="flex items-start justify-between gap-2 border-b border-slate-200 pb-3">
+        <div>
+          <h3 id="manualCandModalTitle" class="text-base sm:text-lg font-extrabold text-slate-900">
+            Ajouter une candidature
+          </h3>
+          <p class="text-xs text-slate-500">Suivre une offre externe ou une candidature spontanée</p>
+        </div>
+        <button
+          type="button"
+          id="closeManualCandModalBtn"
+          class="text-slate-400 hover:text-slate-700 text-2xl font-bold leading-none p-1"
+        >
+          &times;
+        </button>
+      </div>
+
+      <form id="manualCandForm" class="space-y-3.5 text-xs sm:text-sm">
+        <div class="space-y-1">
+          <label for="manualJobTitleInput" class="font-bold text-slate-900">Intitulé du poste *</label>
+          <input
+            type="text"
+            id="manualJobTitleInput"
+            required
+            placeholder="Ex : Développeur Fullstack Node.js / React"
+            class="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-slate-900 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+          />
+        </div>
+
+        <div class="space-y-1">
+          <label for="manualCompanyInput" class="font-bold text-slate-900">Entreprise *</label>
+          <input
+            type="text"
+            id="manualCompanyInput"
+            required
+            placeholder="Ex : Acme Corp"
+            class="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-slate-900 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+          />
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div class="space-y-1">
+            <label for="manualLocationInput" class="font-bold text-slate-900">Lieu</label>
+            <input
+              type="text"
+              id="manualLocationInput"
+              placeholder="Ex : Paris / Remote"
+              class="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-slate-900 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+            />
+          </div>
+          <div class="space-y-1">
+            <label for="manualAppliedDateInput" class="font-bold text-slate-900">Date de postulation *</label>
+            <input
+              type="date"
+              id="manualAppliedDateInput"
+              required
+              class="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-slate-900 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+            />
+          </div>
+        </div>
+
+        <div class="space-y-1">
+          <label for="manualStatusSelect" class="font-bold text-slate-900">Statut initial</label>
+          <select
+            id="manualStatusSelect"
+            class="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-slate-900 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+          >
+            <option value="En attente de réponse">⏳ En attente de réponse</option>
+            <option value="Entretien x">🎙️ Entretien x</option>
+            <option value="Accepté">🎉 Accepté</option>
+            <option value="Non abouti entreprise">✕ Non abouti entreprise</option>
+            <option value="Non abouti candidat">✕ Non abouti candidat</option>
+          </select>
+        </div>
+
+        <div class="space-y-1">
+          <label for="manualUrlInput" class="font-bold text-slate-900">Lien de l'offre (optionnel)</label>
+          <input
+            type="url"
+            id="manualUrlInput"
+            placeholder="https://..."
+            class="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-slate-900 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+          />
+        </div>
+
+        <div class="pt-3 border-t border-slate-200 flex items-center justify-end gap-2.5">
+          <button
+            type="button"
+            id="cancelManualCandBtn"
+            class="px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-semibold text-xs min-h-[38px]"
+          >
+            Annuler
+          </button>
+          <button
+            type="submit"
+            class="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-sm min-h-[38px]"
+          >
+            Ajouter au suivi
+          </button>
+  <!-- Pop-up Modal : Confirmation & Options de Postulation (Conforme WCAG / RGAA) -->
+  <div
+    id="applyConfirmModal"
+    class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm transition-opacity"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="applyConfirmModalTitle"
+  >
+    <div class="relative w-full max-w-lg bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-hidden flex flex-col focus:outline-none" tabindex="-1">
+      
+      <!-- Bouton fermer accessible -->
+      <button
+        type="button"
+        id="closeApplyConfirmModalBtn"
+        class="absolute top-4 right-4 w-10 h-10 flex items-center justify-center rounded-full text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-600 text-2xl font-bold z-10"
+        aria-label="Fermer la fenêtre d'options de candidature"
+      >
+        &times;
+      </button>
+
+      <div class="p-6 space-y-5">
+        
+        <!-- En-tête de la modale -->
+        <div class="border-b border-slate-200 pb-3 pr-8 space-y-1.5">
+          <div class="flex items-center gap-2">
+            <span class="w-8 h-8 rounded-xl bg-indigo-100 border border-indigo-200 flex items-center justify-center text-base" aria-hidden="true">🎯</span>
+            <span class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+              Action de candidature
+            </span>
+          </div>
+          <h3 id="applyConfirmModalTitle" class="text-lg sm:text-xl font-extrabold text-slate-900">
+            Postuler à l'offre
+          </h3>
+          <p class="text-xs text-slate-500">
+            Choisissez comment vous souhaitez traiter cette offre d'emploi.
+          </p>
+        </div>
+
+        <!-- Récapitulatif de l'offre ciblée -->
+        <div class="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2 text-xs sm:text-sm">
+          <div class="font-bold text-slate-900 text-sm sm:text-base leading-snug line-clamp-2" id="applyConfirmJobTitle">
+            Titre de l'offre
+          </div>
+          <div class="flex items-center gap-3 text-slate-600 flex-wrap text-xs font-medium">
+            <span class="flex items-center gap-1 font-semibold text-slate-800">
+              🏢 <span id="applyConfirmCompany">Entreprise</span>
+            </span>
+            <span class="flex items-center gap-1">
+              📍 <span id="applyConfirmLocation">Lieu</span>
+            </span>
+            <span class="flex items-center gap-1">
+              🏷️ <span id="applyConfirmSource" class="px-1.5 py-0.2 rounded bg-white border border-slate-200 text-slate-700">Source</span>
+            </span>
+          </div>
+        </div>
+
+        <!-- Explication de l'action & Date de candidature -->
+        <div class="space-y-3 text-xs sm:text-sm">
+          <div class="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-950 flex items-start gap-2.5">
+            <span class="text-base shrink-0" aria-hidden="true">💡</span>
+            <p class="leading-relaxed">
+              Vous êtes sur le point d'être redirigé vers le site recruteur pour postuler. Vous pouvez également enregistrer cette opportunité dans votre <strong>suivi local de candidatures</strong> (avec calendrier, rappels et export .ics).
+            </p>
+          </div>
+
+          <!-- Date de candidature si marquée -->
+          <div class="space-y-1.5 pt-1">
+            <label for="applyConfirmDateInput" class="text-xs font-bold text-slate-800 flex items-center justify-between">
+              <span>📅 Date de candidature associée :</span>
+              <span class="text-[11px] font-normal text-slate-500">Aujourd'hui par défaut</span>
+            </label>
+            <input
+              type="date"
+              id="applyConfirmDateInput"
+              class="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs sm:text-sm font-semibold text-slate-900 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
+            />
+          </div>
+        </div>
+
+        <!-- Options d'actions (3 choix clairs) -->
+        <div class="pt-3 border-t border-slate-200 flex flex-col gap-2.5">
+          
+          <!-- Choix 1 : Marquer en postulée ET être redirigé vers l'offre -->
+          <button
+            type="button"
+            id="applyAndRedirectBtn"
+            class="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs sm:text-sm shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 min-h-[44px]"
+          >
+            <span>✅</span>
+            <span>Marquer comme « Postulée » et ouvrir l'offre ↗</span>
+          </button>
+
+          <!-- Choix 2 : Juste être redirigé vers l'offre (sans marquer comme postulée) -->
+          <button
+            type="button"
+            id="justVisitOfferBtn"
+            class="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 font-bold text-xs sm:text-sm shadow-2xs transition-all focus:outline-none focus:ring-2 focus:ring-slate-400 min-h-[42px]"
+          >
+            <span>🔗</span>
+            <span>Consulter l'offre uniquement (sans marquer) ↗</span>
+          </button>
+
+          <!-- Choix 3 : Annuler l'action -->
+          <button
+            type="button"
+            id="cancelApplyConfirmBtn"
+            class="w-full inline-flex items-center justify-center px-4 py-2 rounded-xl text-slate-500 hover:text-slate-800 hover:bg-slate-100 font-semibold text-xs transition-all focus:outline-none focus:ring-2 focus:ring-slate-300 min-h-[38px]"
+          >
+            Annuler
+          </button>
+
+        </div>
+
+      </div>
+
+    </div>
+  </div>
+
   <script src="storageManager.js"></script>
+  <script src="archiveService.js"></script>
   <script src="cvParser.js"></script>
   <script src="app.js"></script>
 </body>

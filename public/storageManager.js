@@ -286,6 +286,108 @@
     },
 
     /**
+     * =================== GESTION DES CANDIDATURES ET ENTRETIENS ===================
+     */
+
+    /**
+     * Récupère l'ensemble des candidatures depuis le cache local (localStorage)
+     * @returns {Record<string, Object>} Dictionnaire des candidatures indexées par jobId
+     */
+    getCandidatures() {
+      try {
+        const raw = localStorage.getItem('ftj_candidatures');
+        return raw ? JSON.parse(raw) : {};
+      } catch (e) {
+        console.warn('[StorageManager] Erreur getCandidatures:', e);
+        return {};
+      }
+    },
+
+    /**
+     * Enregistre ou met à jour une candidature
+     * @param {Object} cand Objet candidature
+     * @returns {Record<string, Object>} Dictionnaire mis à jour
+     */
+    saveCandidature(cand) {
+      if (!cand || (!cand.jobId && !cand.id)) return this.getCandidatures();
+      try {
+        const candidatures = this.getCandidatures();
+        const key = cand.jobId || cand.id;
+        const existing = candidatures[key] || {};
+
+        candidatures[key] = {
+          ...existing,
+          ...cand,
+          id: key,
+          jobId: key,
+          updatedAt: Date.now()
+        };
+
+        if (!candidatures[key].createdAt) {
+          candidatures[key].createdAt = Date.now();
+        }
+
+        localStorage.setItem('ftj_candidatures', JSON.stringify(candidatures));
+        return candidatures;
+      } catch (e) {
+        console.warn('[StorageManager] Erreur saveCandidature:', e);
+        return this.getCandidatures();
+      }
+    },
+
+    /**
+     * Supprime une candidature du suivi local
+     * @param {string} jobId Identifiant de l'offre
+     * @returns {Record<string, Object>} Dictionnaire mis à jour
+     */
+    deleteCandidature(jobId) {
+      if (!jobId) return this.getCandidatures();
+      try {
+        const candidatures = this.getCandidatures();
+        delete candidatures[jobId];
+        localStorage.setItem('ftj_candidatures', JSON.stringify(candidatures));
+        return candidatures;
+      } catch (e) {
+        console.warn('[StorageManager] Erreur deleteCandidature:', e);
+        return this.getCandidatures();
+      }
+    },
+
+    /**
+     * Remplace ou fusionne l'ensemble des candidatures (utilisé lors de l'import)
+     * @param {Record<string, Object>} candidaturesMap Dictionnaire complet
+     * @param {boolean} merge Si true, fusionne avec l'existant sans écraser
+     * @returns {Record<string, Object>} Dictionnaire résultant
+     */
+    saveAllCandidatures(candidaturesMap, merge = true) {
+      try {
+        let finalMap = {};
+        if (merge) {
+          const current = this.getCandidatures();
+          finalMap = { ...current, ...candidaturesMap };
+        } else {
+          finalMap = { ...candidaturesMap };
+        }
+        localStorage.setItem('ftj_candidatures', JSON.stringify(finalMap));
+        return finalMap;
+      } catch (e) {
+        console.warn('[StorageManager] Erreur saveAllCandidatures:', e);
+        return this.getCandidatures();
+      }
+    },
+
+    /**
+     * Vérifie si une offre a déjà fait l'objet d'une postulation
+     * @param {string} jobId Identifiant de l'offre
+     * @returns {boolean}
+     */
+    isJobApplied(jobId) {
+      if (!jobId) return false;
+      const candidatures = this.getCandidatures();
+      return Boolean(candidatures[jobId]);
+    },
+
+    /**
      * Charge l'état complet depuis les 3 couches
      */
     async loadState() {
@@ -355,6 +457,7 @@
         cvFeedback,
         jobs,
         jobInteractions,
+        candidatures: this.getCandidatures(),
         parsedCriteria,
         stats,
         availableSources,
@@ -364,8 +467,10 @@
 
     /**
      * Purge intégrale des Cookies, localStorage et IndexedDB
+     * @param {Object} [options]
+     * @param {boolean} [options.purgeCandidatures=false] Détermine si les candidatures doivent également être supprimées
      */
-    async clearAll() {
+    async clearAll(options = { purgeCandidatures: false }) {
       // Purge Cookies
       deleteCookie('ftj_cache_active');
       deleteCookie('ftj_cache_expires');
@@ -380,6 +485,10 @@
       localStorage.removeItem('ftj_cv_criteria');
       localStorage.removeItem('ftj_job_interactions');
       localStorage.removeItem('ftj_cache_meta');
+
+      if (options && options.purgeCandidatures) {
+        localStorage.removeItem('ftj_candidatures');
+      }
 
       // Purge IndexedDB
       try {

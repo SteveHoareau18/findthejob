@@ -98,12 +98,88 @@ document.addEventListener('DOMContentLoaded', () => {
   const tableNextPageBtn = document.getElementById('tableNextPageBtn');
   const tablePageNumbers = document.getElementById('tablePageNumbers');
 
+  // Suivi des Candidatures & Entretiens (Header, Filtres, Modales, Calendrier)
+  const openCandidaturesBtn = document.getElementById('openCandidaturesBtn');
+  const headerCandidaturesBadge = document.getElementById('headerCandidaturesBadge');
+  const candidatureFilterRow = document.getElementById('candidatureFilterRow');
+  const candidatureFiltersContainer = document.getElementById('candidatureFiltersContainer');
+  const countUnapplied = document.getElementById('countUnapplied');
+  const countApplied = document.getElementById('countApplied');
+
+  // Éléments Modale Candidatures
+  const candidaturesModal = document.getElementById('candidaturesModal');
+  const closeCandidaturesModalBtn = document.getElementById('closeCandidaturesModalBtn');
+  const modalCandidaturesTotalBadge = document.getElementById('modalCandidaturesTotalBadge');
+  const candTabListBtn = document.getElementById('candTabListBtn');
+  const candTabCalendarBtn = document.getElementById('candTabCalendarBtn');
+  const candListView = document.getElementById('candListView');
+  const candCalendarView = document.getElementById('candCalendarView');
+  const candEmptyState = document.getElementById('candEmptyState');
+  const candidaturesCardsContainer = document.getElementById('candidaturesCardsContainer');
+  const modalStatusFilterBar = document.getElementById('modalStatusFilterBar');
+  const modalActionNotification = document.getElementById('modalActionNotification');
+  const exportArchiveZipBtn = document.getElementById('exportArchiveZipBtn');
+  const importArchiveBtn = document.getElementById('importArchiveBtn');
+  const importArchiveFileInput = document.getElementById('importArchiveFileInput');
+  const addManualCandBtn = document.getElementById('addManualCandBtn');
+  const candCountWaiting = document.getElementById('candCountWaiting');
+  const candCountInterview = document.getElementById('candCountInterview');
+  const candCountAccepted = document.getElementById('candCountAccepted');
+  const candCountRejected = document.getElementById('candCountRejected');
+
+  // Éléments Calendrier
+  const calPrevMonthBtn = document.getElementById('calPrevMonthBtn');
+  const calNextMonthBtn = document.getElementById('calNextMonthBtn');
+  const calMonthYearLabel = document.getElementById('calMonthYearLabel');
+  const calTodayBtn = document.getElementById('calTodayBtn');
+  const calendarDaysGrid = document.getElementById('calendarDaysGrid');
+  const calendarDayInspector = document.getElementById('calendarDayInspector');
+  const calendarInspectorDateTitle = document.getElementById('calendarInspectorDateTitle');
+  const calendarInspectorEventsList = document.getElementById('calendarInspectorEventsList');
+  const closeCalendarInspectorBtn = document.getElementById('closeCalendarInspectorBtn');
+
+  // Éléments Modale Entretien
+  const interviewModal = document.getElementById('interviewModal');
+  const closeInterviewModalBtn = document.getElementById('closeInterviewModalBtn');
+  const cancelInterviewModalBtn = document.getElementById('cancelInterviewModalBtn');
+  const interviewForm = document.getElementById('interviewForm');
+  const interviewCandJobId = document.getElementById('interviewCandJobId');
+  const interviewEditId = document.getElementById('interviewEditId');
+  const interviewModalTitle = document.getElementById('interviewModalTitle');
+  const interviewModalJobSubtitle = document.getElementById('interviewModalJobSubtitle');
+  const interviewTitleInput = document.getElementById('interviewTitleInput');
+  const interviewDateInput = document.getElementById('interviewDateInput');
+  const interviewTimeInput = document.getElementById('interviewTimeInput');
+  const interviewTypeInput = document.getElementById('interviewTypeInput');
+  const interviewDurationInput = document.getElementById('interviewDurationInput');
+  const interviewLocationInput = document.getElementById('interviewLocationInput');
+  const interviewInterviewerInput = document.getElementById('interviewInterviewerInput');
+  const interviewNotesInput = document.getElementById('interviewNotesInput');
+
+  // Éléments Modale Candidature Manuelle
+  const manualCandModal = document.getElementById('manualCandModal');
+  const closeManualCandModalBtn = document.getElementById('closeManualCandModalBtn');
+  const cancelManualCandBtn = document.getElementById('cancelManualCandBtn');
+  const manualCandForm = document.getElementById('manualCandForm');
+  const manualJobTitleInput = document.getElementById('manualJobTitleInput');
+  const manualCompanyInput = document.getElementById('manualCompanyInput');
+  const manualLocationInput = document.getElementById('manualLocationInput');
+  const manualAppliedDateInput = document.getElementById('manualAppliedDateInput');
+  const manualStatusSelect = document.getElementById('manualStatusSelect');
+  const manualUrlInput = document.getElementById('manualUrlInput');
+
   let currentJobs = [];
   let progressInterval = null;
   let activeSourceFilter = 'all';
   let activeRelevanceFilter = 'all';
   let activeCvRelevanceFilter = 'all';
   let activeUserStatusFilter = 'all'; // 'all' | 'favorite' | 'dismissed' | 'unmarked'
+  let activeCandidatureFilter = 'all'; // 'all' | 'unapplied' | 'applied'
+  let activeModalStatusFilter = 'all'; // 'all' | 'En attente de réponse' | 'Entretien x' | 'Accepté' | 'Non abouti'
+  let candidatures = {}; // { [jobId]: Candidature }
+  let calendarDisplayedDate = new Date();
+  let selectedCalendarDay = null;
+  let currentCandViewTab = 'list'; // 'list' | 'calendar'
   let jobInteractions = {}; // { [jobId]: 'favorite' | 'dismissed' }
   let currentViewMode = localStorage.getItem('ftj_view_mode') || 'table'; // 'table' | 'grid'
   let tableCurrentPage = 1;
@@ -281,6 +357,15 @@ document.addEventListener('DOMContentLoaded', () => {
         jobInteractions = window.storageManager.getJobInteractions() || {};
       }
       updateUserStatusFilterBadges();
+
+      // Restauration des candidatures et entretiens
+      if (cached.candidatures) {
+        candidatures = cached.candidatures;
+      } else if (window.storageManager.getCandidatures) {
+        candidatures = window.storageManager.getCandidatures() || {};
+      }
+      updateCandidaturesBadgeUI();
+      updateCandidatureFilterBadges();
 
       if (cached.hasCache && !cached.isExpired) {
         // Restauration des critères du formulaire
@@ -969,6 +1054,9 @@ Pas de PHP ni de WordPress`;
     activeUserStatusFilter = 'all';
     updateUserStatusFilterBadges();
 
+    activeCandidatureFilter = 'all';
+    updateCandidatureFilterBadges();
+
     applyAllFiltersAndSort();
 
     if (!fromCache) {
@@ -1099,6 +1187,40 @@ Pas de PHP ni de WordPress`;
     });
   }
 
+  // Gestion du filtre par statut de candidature (Toutes / Non postulées / Postulées)
+  if (candidatureFiltersContainer) {
+    candidatureFiltersContainer.querySelectorAll('button').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        activeCandidatureFilter = e.currentTarget.dataset.candidatureStatus || e.currentTarget.dataset.candidatureFilter || 'all';
+        updateCandidatureFilterBadges();
+        applyAllFiltersAndSort();
+      });
+    });
+  }
+
+  function updateCandidatureFilterBadges() {
+    if (!candidatureFiltersContainer) return;
+    const totalCount = currentJobs.length;
+    const appliedCount = currentJobs.filter(j => Boolean(candidatures[j.id])).length;
+    const unappliedCount = currentJobs.filter(j => !candidatures[j.id]).length;
+
+    if (countApplied) countApplied.textContent = appliedCount;
+    if (countUnapplied) countUnapplied.textContent = unappliedCount;
+    const countTotalEl = document.getElementById('countTotalJobs');
+    if (countTotalEl) countTotalEl.textContent = totalCount;
+
+    candidatureFiltersContainer.querySelectorAll('button').forEach(btn => {
+      const status = btn.dataset.candidatureStatus || btn.dataset.candidatureFilter;
+      const isActive = status === activeCandidatureFilter;
+
+      if (isActive) {
+        btn.className = 'filter-badge active px-3 py-1 rounded-full text-xs font-bold border transition-all focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-indigo-500 bg-indigo-600 text-white border-indigo-600 shadow-sm';
+      } else {
+        btn.className = 'filter-badge px-3 py-1 rounded-full text-xs font-semibold border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 transition-all focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-indigo-500';
+      }
+    });
+  }
+
   function setJobUserStatus(jobId, newStatus) {
     if (!jobId) return;
     if (newStatus === 'favorite' || newStatus === 'dismissed') {
@@ -1126,6 +1248,13 @@ Pas de PHP ni de WordPress`;
       filtered = filtered.filter(job => jobInteractions[job.id] === 'dismissed');
     } else if (activeUserStatusFilter === 'unmarked') {
       filtered = filtered.filter(job => !jobInteractions[job.id]);
+    }
+
+    // Filtre par statut de candidature (Postulées / Non postulées)
+    if (activeCandidatureFilter === 'applied') {
+      filtered = filtered.filter(job => Boolean(candidatures[job.id]));
+    } else if (activeCandidatureFilter === 'unapplied') {
+      filtered = filtered.filter(job => !candidatures[job.id]);
     }
 
     // Filtre par provenance
@@ -1328,9 +1457,13 @@ Pas de PHP ni de WordPress`;
       const isFavorite = userStatus === 'favorite';
       const isDismissed = userStatus === 'dismissed';
       const isUnmarked = !userStatus;
+      const isApplied = Boolean(candidatures[job.id]);
+      const cand = candidatures[job.id];
 
       let rowBg = 'hover:bg-slate-50/80 transition-colors';
-      if (isFavorite) {
+      if (isApplied) {
+        rowBg = 'bg-emerald-50/25 hover:bg-emerald-50/50 transition-colors border-l-4 border-emerald-500';
+      } else if (isFavorite) {
         rowBg = 'bg-amber-50/35 hover:bg-amber-50/60 transition-colors border-l-4 border-amber-400';
       } else if (isDismissed) {
         rowBg = 'bg-slate-50/60 opacity-60 hover:opacity-100 transition-opacity';
@@ -1376,7 +1509,9 @@ Pas de PHP ni de WordPress`;
       }
 
       let statusTagHtml = '';
-      if (isUnmarked) {
+      if (isApplied) {
+        statusTagHtml = `<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300">✅ Postulée</span>`;
+      } else if (isUnmarked) {
         statusTagHtml = '<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">🆕 À traiter</span>';
       } else if (isFavorite) {
         statusTagHtml = '<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">⭐ Favori</span>';
@@ -1420,6 +1555,7 @@ Pas de PHP ni de WordPress`;
               <span class="font-semibold text-slate-800">🏢 ${escapeHtml(job.company)}</span>
               ${job.date ? `<span class="text-slate-400">· 📅 ${escapeHtml(job.date)}</span>` : ''}
               ${isExcluded ? '<span class="px-1.5 py-0.2 rounded text-[10px] font-bold bg-rose-100 text-rose-800">Exclu</span>' : ''}
+              ${isApplied && cand?.appliedAt ? `<span class="px-1.5 py-0.2 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">Postulée le ${escapeHtml(formatDateFr(cand.appliedAt))}</span>` : ''}
             </div>
           </div>
         </td>
@@ -1457,15 +1593,25 @@ Pas de PHP ni de WordPress`;
               <span aria-hidden="true">✨</span>
               <span>Tips</span>
             </button>
-            <a
-              href="${job.url}"
-              target="_blank"
-              rel="noopener noreferrer"
-              class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-200 transition-all focus:outline-none focus:ring-1 focus:ring-slate-400"
-              title="Postuler à l'offre"
+            <button
+              type="button"
+              class="btn-table-apply-toggle inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${isApplied ? 'bg-emerald-50 text-emerald-800 border border-emerald-300 hover:bg-emerald-100' : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-2xs'}"
+              data-job-id="${escapeHtml(job.id)}"
+              title="${isApplied ? 'Gérer le suivi et les entretiens de cette candidature' : 'Postuler à l\'offre et marquer comme postulée'}"
             >
-              <span>Postuler ↗</span>
-            </a>
+              <span>${isApplied ? '✓ Postulée' : 'Postuler ↗'}</span>
+            </button>
+            ${isApplied ? `
+              <a
+                href="${job.url}"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="inline-flex items-center justify-center w-7 h-7 rounded-lg text-xs font-bold text-slate-500 hover:text-slate-900 hover:bg-slate-100 border border-slate-200 transition-all"
+                title="Ouvrir le lien de l'offre dans un nouvel onglet"
+              >
+                ↗
+              </a>
+            ` : ''}
           </div>
         </td>
       `;
@@ -1489,6 +1635,15 @@ Pas de PHP ni de WordPress`;
           const currentStatus = jobInteractions[job.id] || null;
           const newStatus = (currentStatus === 'dismissed') ? null : 'dismissed';
           setJobUserStatus(job.id, newStatus);
+        });
+      }
+
+      const applyToggleBtn = tr.querySelector('.btn-table-apply-toggle');
+      if (applyToggleBtn) {
+        applyToggleBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          handleJobApplyClick(job);
         });
       }
 
@@ -1521,10 +1676,14 @@ Pas de PHP ni de WordPress`;
       const userStatus = jobInteractions[job.id] || null;
       const isFavorite = userStatus === 'favorite';
       const isDismissed = userStatus === 'dismissed';
+      const isApplied = Boolean(candidatures[job.id]);
+      const cand = candidatures[job.id];
 
       // Classes Tailwind pour carte claire
       let cardBg = 'bg-white border-slate-200 hover:border-indigo-300 hover:shadow-md';
-      if (isFavorite) {
+      if (isApplied) {
+        cardBg = 'bg-emerald-50/20 border-emerald-300 hover:border-emerald-400 shadow-sm';
+      } else if (isFavorite) {
         cardBg = 'bg-amber-50/25 border-amber-300 hover:border-amber-400 shadow-sm';
       } else if (isDismissed) {
         cardBg = 'bg-slate-50/70 border-slate-200 opacity-60 hover:opacity-100 transition-opacity';
@@ -1590,6 +1749,7 @@ Pas de PHP ni de WordPress`;
                 ${escapeHtml(job.source)}
               </span>
               ${isExcluded ? '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-rose-100 text-rose-800 border border-rose-200">Exclu</span>' : ''}
+              ${isApplied ? `<span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-900 border border-emerald-300">✓ Postulée</span>` : ''}
               ${isFavorite ? '<span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-900 border border-amber-300">⭐ Favori</span>' : ''}
               ${isDismissed ? '<span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-200 text-slate-700 border border-slate-300">✕ Désintéressé</span>' : ''}
             </div>
@@ -1672,7 +1832,10 @@ Pas de PHP ni de WordPress`;
 
         <!-- Ligne Pied : Date & Boutons d'action -->
         <div class="pt-3 border-t border-slate-100 flex items-center justify-between gap-2 flex-wrap text-xs text-slate-500">
-          <span>${escapeHtml(job.date || 'Récemment')}</span>
+          <div class="flex items-center gap-2">
+            <span>${escapeHtml(job.date || 'Récemment')}</span>
+            ${isApplied && cand?.appliedAt ? `<span class="font-semibold text-emerald-700">· Postulée le ${escapeHtml(formatDateFr(cand.appliedAt))}</span>` : ''}
+          </div>
           <div class="flex items-center gap-2">
             <button
               type="button"
@@ -1684,15 +1847,25 @@ Pas de PHP ni de WordPress`;
               <span>Résumé & Tips</span>
             </button>
 
-            <a
-              href="${job.url}"
-              target="_blank"
-              rel="noopener noreferrer"
-              class="inline-flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-200 transition-all focus:outline-none focus:ring-2 focus:ring-slate-400 min-h-[38px]"
-              aria-label="Postuler à l'offre ${escapeHtml(job.title)} sur ${escapeHtml(job.source)}"
+            <button
+              type="button"
+              class="btn-card-apply-toggle inline-flex items-center gap-1 px-3.5 py-2 rounded-xl text-xs font-bold transition-all min-h-[38px] ${isApplied ? 'bg-emerald-50 text-emerald-800 border border-emerald-300 hover:bg-emerald-100' : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-2xs'}"
+              data-job-id="${escapeHtml(job.id)}"
+              aria-label="${isApplied ? 'Gérer cette candidature' : 'Postuler à l\'offre ' + escapeHtml(job.title)}"
             >
-              <span>Postuler ↗</span>
-            </a>
+              <span>${isApplied ? '✓ Postulée' : 'Postuler ↗'}</span>
+            </button>
+            ${isApplied ? `
+              <a
+                href="${job.url}"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="inline-flex items-center justify-center w-9 h-9 rounded-xl text-xs font-bold text-slate-500 hover:text-slate-900 hover:bg-slate-100 border border-slate-200 transition-all"
+                title="Ouvrir le lien de l'offre dans un nouvel onglet"
+              >
+                ↗
+              </a>
+            ` : ''}
           </div>
         </div>
       `;
@@ -1711,6 +1884,25 @@ Pas de PHP ni de WordPress`;
 
       // Écouteur bouton Désintéressé (exclusif)
       const disBtn = card.querySelector('.btn-job-dismiss');
+      if (disBtn) {
+        disBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const currentStatus = jobInteractions[job.id] || null;
+          const newStatus = (currentStatus === 'dismissed') ? null : 'dismissed';
+          setJobUserStatus(job.id, newStatus);
+        });
+      }
+
+      // Écouteur bouton Postuler Intelligent
+      const cardApplyBtn = card.querySelector('.btn-card-apply-toggle');
+      if (cardApplyBtn) {
+        cardApplyBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          handleJobApplyClick(job);
+        });
+      }
       if (disBtn) {
         disBtn.addEventListener('click', (e) => {
           e.preventDefault();
@@ -2028,6 +2220,932 @@ Pas de PHP ni de WordPress`;
         });
       });
     }
+  }
+
+  // =========================================================================
+  // GESTIONNAIRE COMPLET DES CANDIDATURES, ENTRETIENS, CALENDRIER & EXPORT/IMPORT
+  // =========================================================================
+
+  function formatDateFr(dateStr) {
+    if (!dateStr) return '';
+    try {
+      const parts = dateStr.split('-');
+      if (parts.length === 3) {
+        return `${parts[2]}/${parts[1]}/${parts[0]}`;
+      }
+      return dateStr;
+    } catch (e) {
+      return dateStr;
+    }
+  }
+
+  function showToastNotification(message, isSuccess = true) {
+    if (modalActionNotification) {
+      modalActionNotification.textContent = message;
+      modalActionNotification.className = `text-xs font-bold px-3 py-1 rounded-lg ${isSuccess ? 'text-emerald-800 bg-emerald-100 border border-emerald-300' : 'text-rose-800 bg-rose-100 border border-rose-300'}`;
+      modalActionNotification.classList.remove('hidden');
+      setTimeout(() => {
+        modalActionNotification.classList.add('hidden');
+      }, 4000);
+    }
+
+    // Notification globale flottante
+    let toast = document.getElementById('ftjFloatingToast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = 'ftjFloatingToast';
+      toast.className = 'fixed bottom-5 right-5 z-50 px-4 py-3 rounded-2xl shadow-xl border text-xs sm:text-sm font-bold transition-all transform duration-300 flex items-center gap-2 max-w-sm';
+      document.body.appendChild(toast);
+    }
+    toast.className = `fixed bottom-5 right-5 z-50 px-4 py-3 rounded-2xl shadow-xl border text-xs sm:text-sm font-bold transition-all transform duration-300 flex items-center gap-2 max-w-sm ${isSuccess ? 'bg-slate-900 text-white border-slate-700' : 'bg-rose-900 text-white border-rose-700'}`;
+    toast.innerHTML = `<span>${isSuccess ? '✅' : '⚠️'}</span><span>${escapeHtml(message)}</span>`;
+    toast.style.opacity = '1';
+    toast.style.transform = 'translateY(0)';
+    setTimeout(() => {
+      toast.style.opacity = '0';
+      toast.style.transform = 'translateY(10px)';
+    }, 4000);
+  }
+
+  function updateCandidaturesBadgeUI() {
+    const list = Object.values(candidatures);
+    const total = list.length;
+
+    if (headerCandidaturesBadge) headerCandidaturesBadge.textContent = total;
+    if (modalCandidaturesTotalBadge) modalCandidaturesTotalBadge.textContent = `${total} candidature${total > 1 ? 's' : ''}`;
+
+    const waiting = list.filter(c => c.status === 'En attente de réponse').length;
+    const interviews = list.filter(c => c.status === 'Entretien x' || (c.interviews && c.interviews.length > 0)).length;
+    const accepted = list.filter(c => c.status === 'Accepté').length;
+    const rejected = list.filter(c => (c.status || '').startsWith('Non abouti')).length;
+
+    if (candCountWaiting) candCountWaiting.textContent = waiting;
+    if (candCountInterview) candCountInterview.textContent = interviews;
+    if (candCountAccepted) candCountAccepted.textContent = accepted;
+    if (candCountRejected) candCountRejected.textContent = rejected;
+  }
+
+  function handleJobApplyClick(job) {
+    if (!job) return;
+    const isApplied = Boolean(candidatures[job.id]);
+
+    if (isApplied) {
+      // Ouvre directement la modale de gestion focalisée sur cette offre
+      openCandidaturesModal(job.id);
+    } else {
+      // Marquer l'offre en Postulée avec la date du jour
+      const today = new Date().toISOString().split('T')[0];
+      const newCand = {
+        id: job.id,
+        jobId: job.id,
+        jobTitle: job.title || 'Poste sans titre',
+        company: job.company || 'Entreprise',
+        location: job.location || '',
+        url: job.url || '',
+        source: job.source || 'FindTheJob',
+        appliedAt: today,
+        status: 'En attente de réponse',
+        statusStep: '',
+        notes: '',
+        interviews: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      };
+
+      if (window.storageManager) {
+        candidatures = window.storageManager.saveCandidature(newCand);
+      } else {
+        candidatures[job.id] = newCand;
+      }
+
+      // Ouvre la fiche de poste externe dans un nouvel onglet
+      if (job.url) {
+        window.open(job.url, '_blank', 'noopener,noreferrer');
+      }
+
+      updateCandidaturesBadgeUI();
+      updateCandidatureFilterBadges();
+      applyAllFiltersAndSort();
+      showToastNotification(`Candidature pour « ${job.company} » enregistrée au ${formatDateFr(today)} !`);
+    }
+  }
+
+  // =================== CONTRÔLEURS DE LA MODALE PRINCIPALE ===================
+
+  function openCandidaturesModal(focusJobId = null) {
+    if (!candidaturesModal) return;
+    lastFocusedElement = document.activeElement;
+    candidaturesModal.classList.remove('hidden');
+
+    updateCandidaturesBadgeUI();
+    if (currentCandViewTab === 'calendar') {
+      renderCalendarView();
+    } else {
+      renderCandidaturesList();
+    }
+
+    if (focusJobId) {
+      setTimeout(() => {
+        const cardEl = document.getElementById(`cand-card-${focusJobId}`);
+        if (cardEl) {
+          cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          cardEl.classList.add('ring-2', 'ring-indigo-500');
+          setTimeout(() => cardEl.classList.remove('ring-2', 'ring-indigo-500'), 3000);
+        }
+      }, 150);
+    }
+  }
+
+  function closeCandidaturesModal() {
+    if (!candidaturesModal) return;
+    candidaturesModal.classList.add('hidden');
+    if (lastFocusedElement) lastFocusedElement.focus();
+  }
+
+  if (openCandidaturesBtn) {
+    openCandidaturesBtn.addEventListener('click', () => openCandidaturesModal());
+  }
+
+  if (closeCandidaturesModalBtn) {
+    closeCandidaturesModalBtn.addEventListener('click', closeCandidaturesModal);
+  }
+
+  // Fermeture modale sur fond ou touche Echap
+  if (candidaturesModal) {
+    candidaturesModal.addEventListener('click', (e) => {
+      if (e.target === candidaturesModal) closeCandidaturesModal();
+    });
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      if (manualCandModal && !manualCandModal.classList.contains('hidden')) {
+        manualCandModal.classList.add('hidden');
+        return;
+      }
+      if (interviewModal && !interviewModal.classList.contains('hidden')) {
+        interviewModal.classList.add('hidden');
+        return;
+      }
+      if (candidaturesModal && !candidaturesModal.classList.contains('hidden')) {
+        closeCandidaturesModal();
+      }
+    }
+  });
+
+  // Basculement Onglets (Liste / Calendrier)
+  if (candTabListBtn && candTabCalendarBtn) {
+    candTabListBtn.addEventListener('click', () => {
+      currentCandViewTab = 'list';
+      candTabListBtn.className = 'inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all bg-white text-indigo-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[34px]';
+      candTabListBtn.setAttribute('aria-selected', 'true');
+      candTabCalendarBtn.className = 'inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold text-slate-600 hover:text-slate-900 transition-all focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[34px]';
+      candTabCalendarBtn.setAttribute('aria-selected', 'false');
+
+      if (candListView) candListView.classList.remove('hidden');
+      if (candCalendarView) candCalendarView.classList.add('hidden');
+      renderCandidaturesList();
+    });
+
+    candTabCalendarBtn.addEventListener('click', () => {
+      currentCandViewTab = 'calendar';
+      candTabCalendarBtn.className = 'inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all bg-white text-indigo-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[34px]';
+      candTabCalendarBtn.setAttribute('aria-selected', 'true');
+      candTabListBtn.className = 'inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold text-slate-600 hover:text-slate-900 transition-all focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[34px]';
+      candTabListBtn.setAttribute('aria-selected', 'false');
+
+      if (candListView) candListView.classList.add('hidden');
+      if (candCalendarView) candCalendarView.classList.remove('hidden');
+      renderCalendarView();
+    });
+  }
+
+  // Filtres statut dans la modale
+  if (modalStatusFilterBar) {
+    modalStatusFilterBar.querySelectorAll('button').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        activeModalStatusFilter = e.currentTarget.dataset.modalStatus || 'all';
+        modalStatusFilterBar.querySelectorAll('button').forEach(b => {
+          if (b.dataset.modalStatus === activeModalStatusFilter) {
+            b.className = 'modal-status-filter active px-3 py-1 rounded-full font-bold border border-indigo-600 bg-indigo-50 text-indigo-700 shadow-2xs';
+          } else {
+            b.className = 'modal-status-filter px-3 py-1 rounded-full font-semibold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50';
+          }
+        });
+        renderCandidaturesList();
+      });
+    });
+  }
+
+  // =================== RENDU DE LA VUE LISTE DES CANDIDATURES ===================
+
+  function renderCandidaturesList() {
+    if (!candidaturesCardsContainer) return;
+    candidaturesCardsContainer.innerHTML = '';
+
+    const list = Object.values(candidatures).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    let filtered = list;
+
+    if (activeModalStatusFilter === 'En attente de réponse') {
+      filtered = list.filter(c => c.status === 'En attente de réponse');
+    } else if (activeModalStatusFilter === 'Entretien x') {
+      filtered = list.filter(c => c.status === 'Entretien x' || (c.interviews && c.interviews.length > 0));
+    } else if (activeModalStatusFilter === 'Accepté') {
+      filtered = list.filter(c => c.status === 'Accepté');
+    } else if (activeModalStatusFilter === 'Non abouti') {
+      filtered = list.filter(c => (c.status || '').startsWith('Non abouti'));
+    }
+
+    if (!filtered || filtered.length === 0) {
+      if (candEmptyState) candEmptyState.classList.remove('hidden');
+      return;
+    }
+
+    if (candEmptyState) candEmptyState.classList.add('hidden');
+
+    filtered.forEach(cand => {
+      const card = document.createElement('div');
+      card.id = `cand-card-${cand.jobId || cand.id}`;
+      card.className = 'rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm space-y-4 hover:border-indigo-200 transition-all';
+
+      // Statut actuel & bordure
+      const status = cand.status || 'En attente de réponse';
+      let statusBorderColor = 'border-l-4 border-amber-400';
+      if (status === 'Entretien x') statusBorderColor = 'border-l-4 border-indigo-500';
+      else if (status === 'Accepté') statusBorderColor = 'border-l-4 border-emerald-500';
+      else if (status.startsWith('Non abouti')) statusBorderColor = 'border-l-4 border-rose-400';
+
+      card.classList.add(...statusBorderColor.split(' '));
+
+      // Entretien(s)
+      const interviews = Array.isArray(cand.interviews) ? cand.interviews : [];
+      let interviewsHtml = '';
+
+      if (interviews.length > 0) {
+        interviewsHtml = `
+          <div class="space-y-2 pt-2 border-t border-slate-100">
+            <h5 class="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+              <span>🎙️</span>
+              <span>Entretiens programmés (${interviews.length}) :</span>
+            </h5>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              ${interviews.map((item, idx) => `
+                <div class="p-3 rounded-xl bg-indigo-50/50 border border-indigo-100 text-xs space-y-1 relative group">
+                  <div class="flex items-center justify-between gap-1 font-bold text-indigo-950">
+                    <span class="truncate">${escapeHtml(item.title || `Entretien ${idx + 1}`)}</span>
+                    <span class="px-2 py-0.5 rounded-full text-[10px] bg-white border border-indigo-200 text-indigo-700 capitalize">
+                      ${escapeHtml(item.type || 'Visio')}
+                    </span>
+                  </div>
+                  <div class="text-slate-600 flex items-center gap-2 flex-wrap">
+                    <span>📅 ${escapeHtml(formatDateFr(item.date))}</span>
+                    <span>⏰ ${escapeHtml(item.time || '10:00')} (${item.durationMinutes || 60}m)</span>
+                  </div>
+                  ${item.locationOrLink ? `
+                    <div class="text-indigo-700 truncate font-medium">
+                      📍 ${item.locationOrLink.startsWith('http') ? `<a href="${item.locationOrLink}" target="_blank" rel="noopener noreferrer" class="underline hover:text-indigo-900">Lien Visio</a>` : escapeHtml(item.locationOrLink)}
+                    </div>
+                  ` : ''}
+                  ${item.interviewer ? `<div class="text-slate-500 truncate">👤 ${escapeHtml(item.interviewer)}</div>` : ''}
+                  ${item.notes ? `<div class="text-slate-600 text-[11px] italic pt-0.5">"${escapeHtml(item.notes)}"</div>` : ''}
+                  
+                  <!-- Actions entretien -->
+                  <div class="pt-1 flex items-center justify-end gap-1.5">
+                    <button
+                      type="button"
+                      class="btn-edit-interview text-[11px] font-bold text-indigo-600 hover:text-indigo-900 px-2 py-0.5 rounded hover:bg-white"
+                      data-job-id="${escapeHtml(cand.jobId)}"
+                      data-interview-id="${escapeHtml(item.id)}"
+                    >
+                      Modifier
+                    </button>
+                    <button
+                      type="button"
+                      class="btn-delete-interview text-[11px] font-semibold text-rose-600 hover:text-rose-900 px-2 py-0.5 rounded hover:bg-white"
+                      data-job-id="${escapeHtml(cand.jobId)}"
+                      data-interview-id="${escapeHtml(item.id)}"
+                    >
+                      Supprimer
+                    </button>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        `;
+      }
+
+      card.innerHTML = `
+        <div class="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+          <div class="space-y-1 min-w-0">
+            <div class="flex items-center gap-2 flex-wrap">
+              <h4 class="font-extrabold text-slate-900 text-sm sm:text-base leading-snug">
+                ${cand.url ? `<a href="${cand.url}" target="_blank" rel="noopener noreferrer" class="hover:text-indigo-600 focus:outline-none focus:underline">${escapeHtml(cand.jobTitle)} ↗</a>` : escapeHtml(cand.jobTitle)}
+              </h4>
+              <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                ${escapeHtml(cand.source || 'Offre')}
+              </span>
+            </div>
+            
+            <div class="text-xs text-slate-600 flex items-center gap-2 flex-wrap">
+              <span class="font-bold text-slate-800">🏢 ${escapeHtml(cand.company)}</span>
+              ${cand.location ? `<span>📍 ${escapeHtml(cand.location)}</span>` : ''}
+              <span class="text-slate-400">·</span>
+              <span class="font-medium text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-200 flex items-center gap-1">
+                <span>📨 Postulée le</span>
+                <input
+                  type="date"
+                  class="cand-applied-date-input bg-transparent border-0 p-0 text-emerald-950 font-bold text-xs cursor-pointer focus:ring-1 focus:ring-emerald-500 rounded"
+                  value="${cand.appliedAt || ''}"
+                  data-job-id="${escapeHtml(cand.jobId)}"
+                  title="Modifier la date de postulation"
+                />
+              </span>
+            </div>
+          </div>
+
+          <!-- Sélecteur de statut réactif -->
+          <div class="flex items-center gap-2 self-start shrink-0">
+            <label for="status-sel-${escapeHtml(cand.jobId)}" class="sr-only">Statut de la candidature</label>
+            <select
+              id="status-sel-${escapeHtml(cand.jobId)}"
+              class="cand-status-select rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-800 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
+              data-job-id="${escapeHtml(cand.jobId)}"
+            >
+              <option value="En attente de réponse" ${status === 'En attente de réponse' ? 'selected' : ''}>⏳ En attente de réponse</option>
+              <option value="Entretien x" ${status === 'Entretien x' ? 'selected' : ''}>🎙️ Entretien x</option>
+              <option value="Accepté" ${status === 'Accepté' ? 'selected' : ''}>🎉 Accepté</option>
+              <option value="Non abouti entreprise" ${status === 'Non abouti entreprise' ? 'selected' : ''}>✕ Non abouti entreprise</option>
+              <option value="Non abouti candidat" ${status === 'Non abouti candidat' ? 'selected' : ''}>✕ Non abouti candidat</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Section Entretiens -->
+        ${interviewsHtml}
+
+        <!-- Barre d'actions du dossier -->
+        <div class="pt-2 border-t border-slate-100 flex items-center justify-between gap-2 flex-wrap text-xs">
+          <div class="flex items-center gap-2">
+            <button
+              type="button"
+              class="btn-add-interview inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold border border-indigo-200 transition-all focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              data-job-id="${escapeHtml(cand.jobId)}"
+            >
+              <span aria-hidden="true">➕</span>
+              <span>Planifier un entretien</span>
+            </button>
+          </div>
+
+          <button
+            type="button"
+            class="btn-delete-candidature text-slate-400 hover:text-rose-600 hover:bg-rose-50 px-2.5 py-1.5 rounded-xl transition-all font-semibold"
+            data-job-id="${escapeHtml(cand.jobId)}"
+            title="Supprimer cette candidature de votre suivi"
+          >
+            🗑️ Retirer du suivi
+          </button>
+        </div>
+      `;
+
+      // Écouteur changement de statut
+      const statusSelect = card.querySelector('.cand-status-select');
+      if (statusSelect) {
+        statusSelect.addEventListener('change', (e) => {
+          const newSt = e.target.value;
+          cand.status = newSt;
+          cand.updatedAt = Date.now();
+          if (window.storageManager) {
+            candidatures = window.storageManager.saveCandidature(cand);
+          }
+          updateCandidaturesBadgeUI();
+          applyAllFiltersAndSort();
+          renderCandidaturesList();
+          showToastNotification(`Statut mis à jour : "${newSt}"`);
+        });
+      }
+
+      // Écouteur date de postulation
+      const dateInput = card.querySelector('.cand-applied-date-input');
+      if (dateInput) {
+        dateInput.addEventListener('change', (e) => {
+          const newDate = e.target.value;
+          if (newDate) {
+            cand.appliedAt = newDate;
+            cand.updatedAt = Date.now();
+            if (window.storageManager) {
+              candidatures = window.storageManager.saveCandidature(cand);
+            }
+            applyAllFiltersAndSort();
+            showToastNotification(`Date de candidature mise à jour au ${formatDateFr(newDate)}`);
+          }
+        });
+      }
+
+      // Écouteur ajout d'entretien
+      const addIntBtn = card.querySelector('.btn-add-interview');
+      if (addIntBtn) {
+        addIntBtn.addEventListener('click', () => {
+          openInterviewModal(cand.jobId);
+        });
+      }
+
+      // Écouteur modification d'entretien
+      card.querySelectorAll('.btn-edit-interview').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const jId = e.currentTarget.dataset.jobId;
+          const iId = e.currentTarget.dataset.interviewId;
+          openInterviewModal(jId, iId);
+        });
+      });
+
+      // Écouteur suppression d'entretien
+      card.querySelectorAll('.btn-delete-interview').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const jId = e.currentTarget.dataset.jobId;
+          const iId = e.currentTarget.dataset.interviewId;
+          if (confirm('Voulez-vous vraiment supprimer cet entretien ?')) {
+            const targetCand = candidatures[jId];
+            if (targetCand && Array.isArray(targetCand.interviews)) {
+              targetCand.interviews = targetCand.interviews.filter(item => item.id !== iId);
+              if (window.storageManager) {
+                candidatures = window.storageManager.saveCandidature(targetCand);
+              }
+              renderCandidaturesList();
+              updateCandidaturesBadgeUI();
+              showToastNotification('Entretien supprimé.');
+            }
+          }
+        });
+      });
+
+      // Écouteur suppression candidature
+      const delCandBtn = card.querySelector('.btn-delete-candidature');
+      if (delCandBtn) {
+        delCandBtn.addEventListener('click', () => {
+          if (confirm(`Voulez-vous retirer la candidature pour "${cand.company}" de votre suivi ?`)) {
+            if (window.storageManager) {
+              candidatures = window.storageManager.deleteCandidature(cand.jobId);
+            } else {
+              delete candidatures[cand.jobId];
+            }
+            updateCandidaturesBadgeUI();
+            updateCandidatureFilterBadges();
+            applyAllFiltersAndSort();
+            renderCandidaturesList();
+            showToastNotification('Candidature retirée du suivi.');
+          }
+        });
+      }
+
+      candidaturesCardsContainer.appendChild(card);
+    });
+  }
+
+  // =================== RENDU DE LA VUE CALENDRIER INTERACTIF ===================
+
+  function renderCalendarView() {
+    if (!calendarDaysGrid || !calMonthYearLabel) return;
+    calendarDaysGrid.innerHTML = '';
+
+    const currentYear = calendarDisplayedDate.getFullYear();
+    const currentMonth = calendarDisplayedDate.getMonth();
+
+    calMonthYearLabel.textContent = calendarDisplayedDate.toLocaleDateString('fr-FR', {
+      month: 'long',
+      year: 'numeric'
+    });
+
+    const firstDayIndex = new Date(currentYear, currentMonth, 1).getDay();
+    // En France, la semaine commence le Lundi (0=Dimanche -> shift)
+    const startDayOffset = (firstDayIndex === 0 ? 6 : firstDayIndex - 1);
+    const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+    const daysInPrevMonth = new Date(currentYear, currentMonth, 0).getDate();
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    const cList = Object.values(candidatures);
+
+    // Total de 35 ou 42 cases
+    const totalCells = (startDayOffset + daysInMonth > 35) ? 42 : 35;
+
+    for (let i = 0; i < totalCells; i++) {
+      const cell = document.createElement('div');
+      cell.className = 'p-1.5 sm:p-2 min-h-[75px] sm:min-h-[85px] bg-white flex flex-col justify-between transition-colors hover:bg-slate-50 cursor-pointer group relative';
+
+      let cellDateStr = '';
+      let isCurrentMonth = true;
+      let dayNumber = 0;
+
+      if (i < startDayOffset) {
+        isCurrentMonth = false;
+        dayNumber = daysInPrevMonth - startDayOffset + i + 1;
+        const prevMonth = currentMonth === 0 ? 11 : currentMonth - 1;
+        const prevYear = currentMonth === 0 ? currentYear - 1 : currentYear;
+        cellDateStr = `${prevYear}-${String(prevMonth + 1).padStart(2, '0')}-${String(dayNumber).padStart(2, '0')}`;
+        cell.classList.add('bg-slate-50/50', 'text-slate-400');
+      } else if (i >= startDayOffset + daysInMonth) {
+        isCurrentMonth = false;
+        dayNumber = i - (startDayOffset + daysInMonth) + 1;
+        const nextMonth = currentMonth === 11 ? 0 : currentMonth + 1;
+        const nextYear = currentMonth === 11 ? currentYear + 1 : currentYear;
+        cellDateStr = `${nextYear}-${String(nextMonth + 1).padStart(2, '0')}-${String(dayNumber).padStart(2, '0')}`;
+        cell.classList.add('bg-slate-50/50', 'text-slate-400');
+      } else {
+        dayNumber = i - startDayOffset + 1;
+        cellDateStr = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(dayNumber).padStart(2, '0')}`;
+        cell.classList.add('text-slate-800');
+      }
+
+      cell.dataset.date = cellDateStr;
+
+      const isToday = cellDateStr === todayStr;
+      if (isToday) {
+        cell.classList.add('bg-indigo-50/40', 'font-extrabold');
+      }
+
+      if (selectedCalendarDay === cellDateStr) {
+        cell.classList.add('ring-2', 'ring-indigo-600', 'bg-indigo-50/60');
+      }
+
+      // En-tête du jour
+      const dayHeader = document.createElement('div');
+      dayHeader.className = 'flex items-center justify-between text-xs font-bold leading-none';
+      dayHeader.innerHTML = `
+        <span class="${isToday ? 'w-5 h-5 rounded-full bg-indigo-600 text-white flex items-center justify-center text-[11px]' : ''}">${dayNumber}</span>
+      `;
+      cell.appendChild(dayHeader);
+
+      // Événements pour cette date
+      const eventsContainer = document.createElement('div');
+      eventsContainer.className = 'space-y-1 mt-1 overflow-hidden';
+
+      // 1. Candidatures postulées ce jour-là
+      const appliedToday = cList.filter(c => c.appliedAt === cellDateStr);
+      appliedToday.forEach(c => {
+        const tag = document.createElement('div');
+        tag.className = 'px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-50 text-sky-800 border border-sky-200 truncate';
+        tag.textContent = `📨 ${c.company || 'Postulé'}`;
+        tag.title = `Candidature envoyée chez ${c.company} : ${c.jobTitle}`;
+        eventsContainer.appendChild(tag);
+      });
+
+      // 2. Entretiens programmés ce jour-là
+      const interviewsToday = [];
+      cList.forEach(c => {
+        if (Array.isArray(c.interviews)) {
+          c.interviews.forEach(item => {
+            if (item && item.date === cellDateStr) {
+              interviewsToday.push({ cand: c, interview: item });
+            }
+          });
+        }
+      });
+
+      interviewsToday.forEach(({ cand, interview }) => {
+        const tag = document.createElement('div');
+        tag.className = 'px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-950 border border-emerald-300 truncate';
+        tag.textContent = `🎙️ ${interview.time || ''} ${cand.company}`;
+        tag.title = `Entretien : ${interview.title || 'Entretien'} chez ${cand.company}`;
+        eventsContainer.appendChild(tag);
+      });
+
+      cell.appendChild(eventsContainer);
+
+      // Clic sur la case -> Ouvre l'inspecteur d'événements
+      cell.addEventListener('click', () => {
+        selectedCalendarDay = cellDateStr;
+        renderCalendarView();
+        inspectCalendarDay(cellDateStr, appliedToday, interviewsToday);
+      });
+
+      calendarDaysGrid.appendChild(cell);
+    }
+  }
+
+  function inspectCalendarDay(dateStr, appliedList, interviewsList) {
+    if (!calendarDayInspector || !calendarInspectorDateTitle || !calendarInspectorEventsList) return;
+
+    calendarDayInspector.classList.remove('hidden');
+    calendarInspectorDateTitle.innerHTML = `<span>📅</span><span>Événements du ${escapeHtml(formatDateFr(dateStr))}</span>`;
+    calendarInspectorEventsList.innerHTML = '';
+
+    const totalEvents = appliedList.length + interviewsList.length;
+    if (totalEvents === 0) {
+      calendarInspectorEventsList.innerHTML = `
+        <div class="text-slate-500 py-2">
+          Aucun événement (postulation ou entretien) enregistré pour cette date.
+        </div>
+      `;
+      return;
+    }
+
+    appliedList.forEach(cand => {
+      const item = document.createElement('div');
+      item.className = 'p-2.5 rounded-xl bg-white border border-sky-200 flex items-center justify-between gap-2';
+      item.innerHTML = `
+        <div>
+          <div class="font-bold text-sky-950">📨 Candidature envoyée : ${escapeHtml(cand.company)}</div>
+          <div class="text-[11px] text-slate-600">${escapeHtml(cand.jobTitle)}</div>
+        </div>
+        <button
+          type="button"
+          class="px-2.5 py-1 rounded-lg bg-sky-50 hover:bg-sky-100 text-sky-800 font-bold text-xs"
+        >
+          Voir
+        </button>
+      `;
+      item.querySelector('button').addEventListener('click', () => {
+        candTabListBtn.click();
+        openCandidaturesModal(cand.jobId);
+      });
+      calendarInspectorEventsList.appendChild(item);
+    });
+
+    interviewsList.forEach(({ cand, interview }) => {
+      const item = document.createElement('div');
+      item.className = 'p-2.5 rounded-xl bg-white border border-emerald-200 space-y-1';
+      item.innerHTML = `
+        <div class="flex items-center justify-between gap-2 font-bold text-emerald-950">
+          <span>🎙️ ${escapeHtml(interview.title || 'Entretien')} — ${escapeHtml(cand.company)}</span>
+          <span class="text-xs bg-emerald-50 px-2 py-0.5 rounded text-emerald-800 border border-emerald-200">
+            ${escapeHtml(interview.time || '10:00')} (${interview.durationMinutes || 60} min)
+          </span>
+        </div>
+        <div class="text-slate-600 text-xs">${escapeHtml(cand.jobTitle)} (${escapeHtml(interview.type || 'Visio')})</div>
+        ${interview.locationOrLink ? `<div class="text-indigo-700 text-xs font-semibold truncate">📍 ${escapeHtml(interview.locationOrLink)}</div>` : ''}
+        ${interview.notes ? `<div class="text-slate-600 text-xs italic">"${escapeHtml(interview.notes)}"</div>` : ''}
+      `;
+      calendarInspectorEventsList.appendChild(item);
+    });
+  }
+
+  if (closeCalendarInspectorBtn) {
+    closeCalendarInspectorBtn.addEventListener('click', () => {
+      calendarDayInspector.classList.add('hidden');
+    });
+  }
+
+  if (calPrevMonthBtn) {
+    calPrevMonthBtn.addEventListener('click', () => {
+      calendarDisplayedDate.setMonth(calendarDisplayedDate.getMonth() - 1);
+      renderCalendarView();
+    });
+  }
+
+  if (calNextMonthBtn) {
+    calNextMonthBtn.addEventListener('click', () => {
+      calendarDisplayedDate.setMonth(calendarDisplayedDate.getMonth() + 1);
+      renderCalendarView();
+    });
+  }
+
+  if (calTodayBtn) {
+    calTodayBtn.addEventListener('click', () => {
+      calendarDisplayedDate = new Date();
+      selectedCalendarDay = new Date().toISOString().split('T')[0];
+      renderCalendarView();
+    });
+  }
+
+  // =================== MODALE D'AJOUT / ÉDITION D'ENTRETIEN ===================
+
+  function openInterviewModal(candJobId, interviewId = null) {
+    if (!interviewModal || !interviewForm) return;
+    const cand = candidatures[candJobId];
+    if (!cand) return;
+
+    interviewCandJobId.value = candJobId;
+    interviewEditId.value = interviewId || '';
+
+    if (interviewModalJobSubtitle) {
+      interviewModalJobSubtitle.textContent = `${cand.company} — ${cand.jobTitle}`;
+    }
+
+    if (interviewId && Array.isArray(cand.interviews)) {
+      const existing = cand.interviews.find(i => i.id === interviewId);
+      if (existing) {
+        if (interviewModalTitle) interviewModalTitle.textContent = 'Modifier l\'entretien';
+        interviewTitleInput.value = existing.title || '';
+        interviewDateInput.value = existing.date || '';
+        interviewTimeInput.value = existing.time || '10:00';
+        interviewTypeInput.value = existing.type || 'visio';
+        interviewDurationInput.value = existing.durationMinutes || 60;
+        interviewLocationInput.value = existing.locationOrLink || '';
+        interviewInterviewerInput.value = existing.interviewer || '';
+        interviewNotesInput.value = existing.notes || '';
+      }
+    } else {
+      if (interviewModalTitle) interviewModalTitle.textContent = 'Planifier un entretien';
+      const existingCount = (cand.interviews && cand.interviews.length) || 0;
+      interviewTitleInput.value = `Entretien ${existingCount + 1}`;
+      // Date par défaut : aujourd'hui + 2 jours
+      const defaultDate = new Date();
+      defaultDate.setDate(defaultDate.getDate() + 2);
+      interviewDateInput.value = defaultDate.toISOString().split('T')[0];
+      interviewTimeInput.value = '10:00';
+      interviewTypeInput.value = 'visio';
+      interviewDurationInput.value = '60';
+      interviewLocationInput.value = '';
+      interviewInterviewerInput.value = '';
+      interviewNotesInput.value = '';
+    }
+
+    interviewModal.classList.remove('hidden');
+    interviewTitleInput.focus();
+  }
+
+  if (closeInterviewModalBtn) {
+    closeInterviewModalBtn.addEventListener('click', () => interviewModal.classList.add('hidden'));
+  }
+  if (cancelInterviewModalBtn) {
+    cancelInterviewModalBtn.addEventListener('click', () => interviewModal.classList.add('hidden'));
+  }
+
+  if (interviewForm) {
+    interviewForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const candJobId = interviewCandJobId.value;
+      const editId = interviewEditId.value;
+      const cand = candidatures[candJobId];
+      if (!cand) return;
+
+      if (!Array.isArray(cand.interviews)) {
+        cand.interviews = [];
+      }
+
+      const interviewData = {
+        id: editId || `int_${candJobId}_${Date.now()}`,
+        title: interviewTitleInput.value.trim() || 'Entretien',
+        date: interviewDateInput.value,
+        time: interviewTimeInput.value || '10:00',
+        durationMinutes: parseInt(interviewDurationInput.value, 10) || 60,
+        type: interviewTypeInput.value || 'visio',
+        locationOrLink: interviewLocationInput.value.trim(),
+        interviewer: interviewInterviewerInput.value.trim(),
+        notes: interviewNotesInput.value.trim()
+      };
+
+      if (editId) {
+        const idx = cand.interviews.findIndex(i => i.id === editId);
+        if (idx !== -1) cand.interviews[idx] = interviewData;
+      } else {
+        cand.interviews.push(interviewData);
+      }
+
+      // Si le statut était "En attente de réponse", on le bascule automatiquement en "Entretien x"
+      if (cand.status === 'En attente de réponse') {
+        cand.status = 'Entretien x';
+      }
+
+      cand.updatedAt = Date.now();
+
+      if (window.storageManager) {
+        candidatures = window.storageManager.saveCandidature(cand);
+      }
+
+      interviewModal.classList.add('hidden');
+      updateCandidaturesBadgeUI();
+      applyAllFiltersAndSort();
+      renderCandidaturesList();
+      if (currentCandViewTab === 'calendar') renderCalendarView();
+
+      showToastNotification(`Entretien enregistré pour ${cand.company} le ${formatDateFr(interviewData.date)} à ${interviewData.time} !`);
+    });
+  }
+
+  // =================== MODALE CANDIDATURE MANUELLE ===================
+
+  if (addManualCandBtn) {
+    addManualCandBtn.addEventListener('click', () => {
+      if (!manualCandModal || !manualCandForm) return;
+      manualCandForm.reset();
+      manualAppliedDateInput.value = new Date().toISOString().split('T')[0];
+      manualCandModal.classList.remove('hidden');
+      manualJobTitleInput.focus();
+    });
+  }
+
+  if (closeManualCandModalBtn) {
+    closeManualCandModalBtn.addEventListener('click', () => manualCandModal.classList.add('hidden'));
+  }
+  if (cancelManualCandBtn) {
+    cancelManualCandBtn.addEventListener('click', () => manualCandModal.classList.add('hidden'));
+  }
+
+  if (manualCandForm) {
+    manualCandForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const newId = `cand_manual_${Date.now()}`;
+      const newCand = {
+        id: newId,
+        jobId: newId,
+        jobTitle: manualJobTitleInput.value.trim() || 'Poste',
+        company: manualCompanyInput.value.trim() || 'Entreprise',
+        location: manualLocationInput.value.trim() || '',
+        url: manualUrlInput.value.trim() || '',
+        source: 'Spontanée / Externe',
+        appliedAt: manualAppliedDateInput.value || new Date().toISOString().split('T')[0],
+        status: manualStatusSelect.value || 'En attente de réponse',
+        statusStep: '',
+        notes: '',
+        interviews: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      };
+
+      if (window.storageManager) {
+        candidatures = window.storageManager.saveCandidature(newCand);
+      } else {
+        candidatures[newId] = newCand;
+      }
+
+      manualCandModal.classList.add('hidden');
+      updateCandidaturesBadgeUI();
+      updateCandidatureFilterBadges();
+      renderCandidaturesList();
+      showToastNotification(`Candidature chez "${newCand.company}" ajoutée avec succès !`);
+    });
+  }
+
+  // =================== EXPORT ARCHIVE ZIP (DONNÉES + CALENDRIER) ===================
+
+  if (exportArchiveZipBtn) {
+    exportArchiveZipBtn.addEventListener('click', async () => {
+      if (!window.archiveService) {
+        alert('Le service d\'archivage n\'est pas encore chargé.');
+        return;
+      }
+
+      const total = Object.keys(candidatures).length;
+      if (total === 0) {
+        alert('Vous n\'avez aucune candidature enregistrée à exporter.');
+        return;
+      }
+
+      exportArchiveZipBtn.disabled = true;
+      const oldHtml = exportArchiveZipBtn.innerHTML;
+      exportArchiveZipBtn.innerHTML = '<span>⏳ Création de l\'archive ZIP...</span>';
+
+      try {
+        const res = await window.archiveService.exportZipArchive(candidatures);
+        showToastNotification('📦 Archive ZIP téléchargée ! (Contient vos entretiens .ics et vos données .json)');
+      } catch (err) {
+        console.error('Erreur export archive:', err);
+        alert(`Erreur lors de l'exportation : ${err.message}`);
+      } finally {
+        exportArchiveZipBtn.disabled = false;
+        exportArchiveZipBtn.innerHTML = oldHtml;
+      }
+    });
+  }
+
+  // =================== IMPORT ARCHIVE ZIP OU JSON ===================
+
+  if (importArchiveBtn && importArchiveFileInput) {
+    importArchiveBtn.addEventListener('click', () => {
+      importArchiveFileInput.click();
+    });
+
+    importArchiveFileInput.addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      if (!window.archiveService) {
+        alert('Le service d\'archivage n\'est pas disponible.');
+        return;
+      }
+
+      importArchiveBtn.disabled = true;
+      const oldText = importArchiveBtn.innerHTML;
+      importArchiveBtn.innerHTML = '<span>⏳ Lecture...</span>';
+
+      try {
+        const result = await window.archiveService.parseImportFile(file);
+
+        if (result.success && result.candidatures) {
+          if (window.storageManager) {
+            candidatures = window.storageManager.saveAllCandidatures(result.candidatures, true);
+          } else {
+            candidatures = { ...candidatures, ...result.candidatures };
+          }
+
+          updateCandidaturesBadgeUI();
+          updateCandidatureFilterBadges();
+          applyAllFiltersAndSort();
+          renderCandidaturesList();
+          if (currentCandViewTab === 'calendar') renderCalendarView();
+
+          showToastNotification(`📥 ${result.candidaturesCount} candidatures et ${result.interviewsCount} entretiens importés avec succès !`);
+        }
+      } catch (err) {
+        console.error('Erreur import archive:', err);
+        alert(`Échec de l'importation : ${err.message}`);
+      } finally {
+        importArchiveFileInput.value = '';
+        importArchiveBtn.disabled = false;
+        importArchiveBtn.innerHTML = oldText;
+      }
+    });
   }
 
   function escapeHtml(str) {
