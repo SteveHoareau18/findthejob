@@ -2,6 +2,7 @@ const { execFile } = require('child_process');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const { scrapeLinkedIn, scrapeLinkedInJobs } = require('./src/scrapers/linkedin');
+const { scrapeFranceTravail, scrapeFranceTravailJobs } = require('./src/scrapers/francetravail');
 
 // Configuration HTTP avec headers réalistes simulant un navigateur complet
 const browserHeaders = {
@@ -46,92 +47,7 @@ function cleanSearchKeyword(query) {
 }
 // 1. LINKEDIN JOBS : Délégué au module générique en couches ./src/scrapers/linkedin
 
-/**
- * 2. FRANCE TRAVAIL (Pôle Emploi) - VERSION RENFORCÉE
- * - Gère le nettoyage des termes complexes pour éviter les 0 résultats
- * - Retry automatique avec mot-clé de secours si la requête composée est trop étroite
- * - Titre sans duplication et détection fine des départements DROM
- */
-async function scrapeFranceTravail(searchTerm, locationCode = '', limit = 25) {
-  const cleanTerm = cleanSearchKeyword(searchTerm);
-
-  // Liste des requêtes candidates : d'abord le terme nettoyé, puis les mots individuels significatifs
-  const words = cleanTerm.split(' ').filter(w => w.length > 2);
-  const queriesToTry = [
-    cleanTerm,
-    words.length > 1 ? words.slice(0, 2).join(' ') : null,
-    words[0] || 'developpeur'
-  ].filter(Boolean);
-
-  for (const query of queriesToTry) {
-    try {
-      let url = `https://candidat.francetravail.fr/offres/recherche?motsCles=${encodeURIComponent(query)}`;
-      if (locationCode) {
-        url += `&lieux=${encodeURIComponent(locationCode)}`;
-      }
-
-      const res = await httpClient.get(url, {
-        headers: {
-          ...browserHeaders,
-          'Referer': 'https://candidat.francetravail.fr/offres/recherche'
-        }
-      });
-
-      const $ = cheerio.load(res.data);
-      const jobs = [];
-
-      $('[data-id-offre], li.result').each((_, el) => {
-        if (jobs.length >= limit) return false;
-        const id = $(el).attr('data-id-offre') || $(el).attr('id') || `ft-${jobs.length}`;
-        
-        // Sélection précise du titre sans duplication
-        const titleEl = $(el).find('h2.media-heading, .media-heading-title, h2').first();
-        const title = titleEl.text().replace(/\s+/g, ' ').trim();
-        const subtext = $(el).find('.subtext').first().text().replace(/\s+/g, ' ').trim();
-        const desc = $(el).find('.description').first().text().replace(/\s+/g, ' ').trim();
-        const href = $(el).find('a[href*="/offres/recherche/detail/"]').first().attr('href');
-
-        if (title) {
-          let company = 'Entreprise France Travail';
-          let loc = locationCode ? `DROM (${locationCode})` : 'France';
-
-          if (subtext) {
-            const parts = subtext.split('-').map(p => p.trim());
-            if (parts.length >= 2) {
-              company = parts[0];
-              loc = parts.slice(1).join(' - ');
-            } else {
-              company = subtext;
-            }
-          }
-
-          jobs.push({
-            id: `ft-${id}`,
-            title,
-            company,
-            location: loc,
-            contractType: 'CDI / CDD',
-            salary: 'Non communiqué',
-            description: desc || subtext || title,
-            tags: ['France Travail', locationCode ? `DROM ${locationCode}` : 'France'],
-            url: href ? (href.startsWith('http') ? href : `https://candidat.francetravail.fr${href}`) : 'https://candidat.francetravail.fr',
-            source: 'France Travail',
-            date: 'Récemment'
-          });
-        }
-      });
-
-      if (jobs.length > 0) {
-        console.log(`[Scraper France Travail] ✅ ${jobs.length} offres trouvées avec "${query}" (Lieu: ${locationCode || 'Tout'}).`);
-        return jobs;
-      }
-    } catch (err) {
-      console.warn(`[Scraper France Travail] Erreur requête "${query}":`, err.message);
-    }
-  }
-
-  return [];
-}
+// 2. FRANCE TRAVAIL : Délégué au module générique en couches ./src/scrapers/francetravail
 
 /**
  * 3. HELLOWORK (France & DROM)
@@ -526,10 +442,24 @@ async function scrapeJobs({ query, keywords = [], primaryTitle = '', location = 
     f_WT: linkedInWorkplaceType
   };
 
+  // Configuration ciblée pour France Travail
+  let ftNatureContrat = null;
+  if (/\bcdi\b|temps plein/i.test(qLower)) ftNatureContrat = 'E1';
+  else if (/\bcdd\b/i.test(qLower)) ftNatureContrat = 'E2';
+  else if (/\bint[eé]rim\b|\bmission\b/i.test(qLower)) ftNatureContrat = 'E3';
+
+  const franceTravailConfig = {
+    motsCles: searchTerm,
+    lieux: ftCode,
+    natureContrat: ftNatureContrat,
+    tri: '1',
+    limit: 25
+  };
+
   // Lancement concurrent de TOUS les scrapers
   const scrapersToRun = [
-    // 1. France Travail (Renforcé avec retry mots-clés)
-    scrapeFranceTravail(searchTerm, ftCode, 25),
+    // 1. France Travail (Module générique en couches avec retry mots-clés)
+    scrapeFranceTravail(franceTravailConfig),
 
     // 2. LinkedIn (France, DROM ou Europe - Module générique)
     scrapeLinkedIn(linkedInConfig),
@@ -592,6 +522,7 @@ function hashString(str) {
 module.exports = {
   scrapeJobs,
   scrapeFranceTravail,
+  scrapeFranceTravailJobs,
   scrapeLinkedIn,
   scrapeLinkedInJobs,
   scrapeHellowork,
