@@ -239,14 +239,64 @@ curl -X POST http://localhost:3000/api/search \
 
 ## 🐳 Déploiement & Docker
 
-L'application fournit un `Dockerfile` multi-stage optimisé (Node 24 Alpine) et des configurations Docker Compose prêtes à l'emploi.
+L'application fournit un `Dockerfile` multi-stage optimisé (Node 24 Alpine), des configurations Docker Compose prêtes à l'emploi et une image pré-construite publiée automatiquement via CI/CD sur **GitHub Container Registry (GHCR)**.
 
-### Mode Développement (avec volume monté en live)
+### 📦 Utilisation de l'image GHCR (Recommandé)
+
+#### 1. Télécharger l'image (`docker pull`)
+```bash
+docker pull ghcr.io/stevehoareau18/findthejob:latest
+```
+
+> [!NOTE]
+> *Si le package est en visibilité privée sur votre dépôt GitHub, connectez-vous préalablement avec un Personal Access Token (PAT) doté du scope `read:packages` :*
+> ```bash
+> echo $GH_PAT | docker login ghcr.io -u SteveHoareau18 --password-stdin
+> ```
+
+#### 2. Lancer le conteneur (`docker run`)
+
+**Option A : En utilisant votre fichier `.env` existant**
+```bash
+docker run -d \
+  --name findthejob \
+  -p 3000:3000 \
+  --env-file .env \
+  --restart unless-stopped \
+  ghcr.io/stevehoareau18/findthejob:latest
+```
+
+**Option B : En passant les variables d'environnement en ligne de commande**
+```bash
+docker run -d \
+  --name findthejob \
+  -p 3000:3000 \
+  -e GROQ_API_KEY="votre_cle_groq" \
+  --restart unless-stopped \
+  ghcr.io/stevehoareau18/findthejob:latest
+```
+
+L'application est immédiatement accessible sur **http://localhost:3000**.
+
+#### 3. Commandes utiles
+```bash
+# Suivre les logs en temps réel
+docker logs -f findthejob
+
+# Arrêter et supprimer le conteneur
+docker stop findthejob && docker rm findthejob
+```
+
+---
+
+### 🛠️ Construction locale avec Docker Compose
+
+#### Mode Développement (avec hot-reload & volume monté en direct)
 ```bash
 docker compose -f dev.compose.yml up --build
 ```
 
-### Mode Production
+#### Mode Production locale
 ```bash
 docker compose up -d --build
 ```
