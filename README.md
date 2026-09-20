@@ -347,4 +347,6 @@ Ce projet est distribué sous licence libre **ISC**. Consultez le fichier [LICEN
 
 <div align="center">
   Développé avec passion par <a href="https://github.com/SteveHoareau18"><b>SteveHoareau18</b></a> • Conçu pour booster votre carrière 🚀
+  <br/><br/>
+  🐛 <b>Un problème ou une suggestion ?</b> <a href="https://github.com/SteveHoareau18/findthejob/issues/new">Cliquez ici pour signaler un bug</a>
 </div>
