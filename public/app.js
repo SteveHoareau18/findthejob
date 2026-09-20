@@ -2510,6 +2510,8 @@ Pas de PHP ni de WordPress`;
   let currentStreamingText = '';
   let wsReconnectTimeout = null;
   let wsReconnectDelay = 1000;
+  let activeChatAbortController = null;
+  let useHttpChatFallback = false;
 
   function closeModal() {
     jobModal.classList.add('hidden');
@@ -2520,6 +2522,10 @@ Pas de PHP ni de WordPress`;
       wsReconnectTimeout = null;
     }
     wsReconnectDelay = 1000;
+    if (activeChatAbortController) {
+      activeChatAbortController.abort();
+      activeChatAbortController = null;
+    }
     // Restitution du focus au bouton déclencheur (RGAA)
     if (lastFocusedElement) {
       lastFocusedElement.focus();
@@ -3114,6 +3120,11 @@ Pas de PHP ni de WordPress`;
   // ONGLET 3 : CHATBOT RECRUTEMENT GROQ AI VIA WEBSOCKET (Temps Réel 2026)
   // =========================================================================
 
+  function isVercelEnvironment() {
+    return window.location.hostname.includes('vercel.app') || 
+           window.location.hostname.includes('now.sh');
+  }
+
   function getWebSocketUrl() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     return `${protocol}//${window.location.host}/ws/chat`;
@@ -3129,6 +3140,19 @@ Pas de PHP ni de WordPress`;
   }
 
   function initChatWebSocket() {
+    // Si nous sommes hébergés sur Vercel, les WebSockets Node.js ne sont pas supportés par l'infra serverless :
+    // nous utilisons directement le transport HTTP SSE sans générer d'erreurs en console.
+    if (isVercelEnvironment()) {
+      useHttpChatFallback = true;
+      updateChatWsStatus(true, 'Coach Groq connecté (Cloud)');
+      return;
+    }
+
+    if (useHttpChatFallback) {
+      updateChatWsStatus(true, 'Coach Groq connecté (Mode flux)');
+      return;
+    }
+
     if (chatWs && (chatWs.readyState === WebSocket.OPEN || chatWs.readyState === WebSocket.CONNECTING)) {
       return;
     }
@@ -3151,21 +3175,25 @@ Pas de PHP ni de WordPress`;
       };
 
       chatWs.onerror = (err) => {
-        console.warn('[ChatWS] Erreur WebSocket :', err);
-        updateChatWsStatus(false, 'Connexion instable');
+        console.warn('[ChatWS] WebSocket indisponible, bascule automatique en flux HTTP :', err);
+        useHttpChatFallback = true;
+        updateChatWsStatus(true, 'Coach Groq connecté (Mode secours)');
       };
 
       chatWs.onclose = () => {
-        updateChatWsStatus(false, 'Déconnecté (reconnexion automatique...)');
-        if (jobModal && !jobModal.classList.contains('hidden')) {
-          clearTimeout(wsReconnectTimeout);
-          wsReconnectTimeout = setTimeout(initChatWebSocket, wsReconnectDelay);
-          wsReconnectDelay = Math.min(wsReconnectDelay * 1.5, 10000);
+        if (!useHttpChatFallback) {
+          updateChatWsStatus(false, 'Déconnecté (reconnexion automatique...)');
+          if (jobModal && !jobModal.classList.contains('hidden')) {
+            clearTimeout(wsReconnectTimeout);
+            wsReconnectTimeout = setTimeout(initChatWebSocket, wsReconnectDelay);
+            wsReconnectDelay = Math.min(wsReconnectDelay * 1.5, 10000);
+          }
         }
       };
     } catch (e) {
-      console.warn('[ChatWS] Impossible d\'initialiser WebSocket:', e);
-      updateChatWsStatus(false, 'Mode hors-ligne');
+      console.warn('[ChatWS] Impossible d\'initialiser WebSocket, activation du mode flux HTTP:', e);
+      useHttpChatFallback = true;
+      updateChatWsStatus(true, 'Coach Groq connecté (Mode secours)');
     }
   }
 
@@ -3365,6 +3393,95 @@ Pas de PHP ni de WordPress`;
     isStreamingChat = disabled;
   }
 
+  async function sendChatMessageViaHttp(payload) {
+    if (activeChatAbortController) {
+      activeChatAbortController.abort();
+    }
+    activeChatAbortController = new AbortController();
+
+    try {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'text/event-stream'
+        },
+        body: JSON.stringify(payload),
+        signal: activeChatAbortController.signal
+      });
+
+      if (!response.ok) {
+        throw new Error(`Erreur serveur HTTP (${response.status})`);
+      }
+
+      if (!response.body) {
+        throw new Error('Streaming HTTP non supporté par ce navigateur.');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop();
+
+        for (const block of parts) {
+          const lines = block.split('\n');
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith('data:')) {
+              const jsonStr = trimmed.replace(/^data:\s*/, '').trim();
+              if (jsonStr) {
+                try {
+                  const data = JSON.parse(jsonStr);
+                  handleChatWsMessage(data);
+                } catch (pe) {
+                  console.warn('[ChatHTTP] Erreur parsing message SSE:', pe, jsonStr);
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Vider le buffer restant si présent
+      if (buffer && buffer.trim()) {
+        const lines = buffer.trim().split('\n');
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith('data:')) {
+            const jsonStr = trimmed.replace(/^data:\s*/, '').trim();
+            if (jsonStr) {
+              try {
+                const data = JSON.parse(jsonStr);
+                handleChatWsMessage(data);
+              } catch (pe) {}
+            }
+          }
+        }
+      }
+
+      // Si le streaming s'est terminé sans événement 'done' ou 'error' explicite
+      if (isStreamingChat) {
+        finishStreaming(currentStreamingText || "Réponse terminée.");
+      }
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        console.log('[ChatHTTP] Requête de chat annulée.');
+        return;
+      }
+      console.error('[ChatHTTP] Erreur communication chat HTTP :', err);
+      finishStreaming("⚠️ Une erreur est survenue lors de la communication avec le coach Groq. Veuillez réessayer.");
+    } finally {
+      activeChatAbortController = null;
+    }
+  }
+
   function sendChatMessage(text) {
     if (!text || !text.trim() || isStreamingChat) return;
     const cleanText = text.trim();
@@ -3386,21 +3503,11 @@ Pas de PHP ni de WordPress`;
       messages: chatMessagesHistory
     };
 
-    if (chatWs && chatWs.readyState === WebSocket.OPEN) {
-      chatWs.send(JSON.stringify(payload));
+    // Priorité HTTP streaming si environnement Vercel, fallback activé ou WebSocket non ouvert
+    if (isVercelEnvironment() || useHttpChatFallback || !chatWs || chatWs.readyState !== WebSocket.OPEN) {
+      sendChatMessageViaHttp(payload);
     } else {
-      initChatWebSocket();
-      let attempts = 0;
-      const sendInterval = setInterval(() => {
-        attempts++;
-        if (chatWs && chatWs.readyState === WebSocket.OPEN) {
-          clearInterval(sendInterval);
-          chatWs.send(JSON.stringify(payload));
-        } else if (attempts >= 10) {
-          clearInterval(sendInterval);
-          finishStreaming("Désolé, la connexion au serveur est indisponible. Veuillez réessayer.");
-        }
-      }, 300);
+      chatWs.send(JSON.stringify(payload));
     }
   }
 
@@ -3499,6 +3606,10 @@ Pas de PHP ni de WordPress`;
   // Bouton de réinitialisation du chat
   if (clearChatBtn) {
     clearChatBtn.addEventListener('click', () => {
+      if (activeChatAbortController) {
+        activeChatAbortController.abort();
+        activeChatAbortController = null;
+      }
       resetChatToWelcome(currentAnalysisJob);
       chatInput?.focus();
     });

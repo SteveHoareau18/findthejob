@@ -10,6 +10,7 @@ const { analyzeJobAndGetTips } = require('./src/jobAnalysisService');
 const { adaptCvCriteriaWithGroq, scoreJobsWithCvGroq } = require('./src/cvGroqService');
 const { handleGenerateArgumentaire } = require('./src/controllers/argumentaireController');
 const { initChatWebSocketServer } = require('./src/websocket/chatWebSocketHandler');
+const { streamChatConversation } = require('./src/services/chatService');
 const { scrapeJobs } = require('./scrap');
 
 const app = express();
@@ -183,6 +184,88 @@ app.post('/api/jobs/analyze', async (req, res) => {
  * basés sur les critères du candidat et les données de l'offre
  */
 app.post('/api/jobs/argumentaire', handleGenerateArgumentaire);
+
+/**
+ * Route POST /api/chat
+ * Endpoint HTTP de streaming conversationnel (Server-Sent Events)
+ * Compatible avec les environnements serverless comme Vercel Functions
+ * où les connexions WebSockets persistantes ne sont pas supportées.
+ */
+app.post('/api/chat', async (req, res) => {
+  const { job, cvCriteria = null, messages = [] } = req.body || {};
+
+  if (!job || !messages || !Array.isArray(messages)) {
+    return res.status(400).json({
+      type: 'error',
+      error: 'Format de requête invalide : offre ou historique manquant.'
+    });
+  }
+
+  // Configuration SSE
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no'
+  });
+
+  if (typeof res.flushHeaders === 'function') {
+    res.flushHeaders();
+  }
+
+  let isClosed = false;
+  req.on('close', () => {
+    isClosed = true;
+  });
+
+  // Signal de début de streaming
+  res.write(`data: ${JSON.stringify({ type: 'start', timestamp: Date.now() })}\n\n`);
+
+  try {
+    await streamChatConversation({
+      job,
+      cvCriteria,
+      messages,
+      onChunk: (delta) => {
+        if (!isClosed) {
+          res.write(`data: ${JSON.stringify({ type: 'chunk', delta })}\n\n`);
+        }
+      },
+      onDone: (fullText, meta = null) => {
+        if (!isClosed) {
+          res.write(`data: ${JSON.stringify({
+            type: 'done',
+            fullText,
+            isGroqRateLimit: Boolean(meta?.isGroqRateLimit),
+            retryAfterSeconds: meta?.retryAfterSeconds || null,
+            retryAfterFormatted: meta?.retryAfterFormatted || null
+          })}\n\n`);
+          res.end();
+        }
+      },
+      onError: (err) => {
+        if (!isClosed) {
+          res.write(`data: ${JSON.stringify({
+            type: 'error',
+            error: err.message || 'Erreur lors de la génération',
+            isGroqRateLimit: Boolean(err?.isGroqRateLimit),
+            retryAfterSeconds: err?.retryAfterSeconds || null,
+            retryAfterFormatted: err?.retryAfterFormatted || null
+          })}\n\n`);
+          res.end();
+        }
+      }
+    });
+  } catch (err) {
+    if (!isClosed) {
+      res.write(`data: ${JSON.stringify({
+        type: 'error',
+        error: err.message || 'Erreur lors du traitement de la requête.'
+      })}\n\n`);
+      res.end();
+    }
+  }
+});
 
 /**
  * Route POST /api/cv/adapt-groq
