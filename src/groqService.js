@@ -1,5 +1,6 @@
 const Groq = require('groq-sdk');
 require('dotenv').config();
+const { isGroqRateLimitError, createGroqRateLimitPayload } = require('./utils/groqErrorHandler');
 
 let groqClient = null;
 
@@ -101,6 +102,17 @@ ZONE : ${manualGeoRegion}`;
       const parsed = JSON.parse(fallbackCompletion.choices[0]?.message?.content || '{}');
       return { success: true, data: parsed, isAiPowered: true };
     } catch (e2) {
+      const isRateLimit = isGroqRateLimitError(e2) || isGroqRateLimitError(err);
+      if (isRateLimit) {
+        const rateLimitPayload = createGroqRateLimitPayload(e2 || err, 'la recherche sémantique');
+        return {
+          success: true,
+          data: fallbackParse(query, exclusions, manualGeoRegion),
+          isAiPowered: false,
+          warning: rateLimitPayload.message,
+          groqRateLimit: rateLimitPayload
+        };
+      }
       return {
         success: true,
         data: fallbackParse(query, exclusions, manualGeoRegion),

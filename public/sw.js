@@ -185,6 +185,37 @@ self.addEventListener('sync', (event) => {
 });
 
 /**
+ * Réception de messages du client pour les rappels de notification
+ */
+self.addEventListener('message', (event) => {
+  if (!event.data) return;
+
+  if (event.data.type === 'FTJ_SHOW_NOTIFICATION') {
+    const { title = 'Tokens Groq disponibles ! 🚀', options = {} } = event.data;
+    self.registration.showNotification(title, {
+      body: 'Le délai d\'attente est écoulé. Vos quotas sont réinitialisés, vous pouvez relancer votre requête.',
+      icon: '/favicon.svg',
+      badge: '/favicon.svg',
+      tag: 'groq-token-available',
+      data: { url: '/' },
+      ...options
+    });
+  } else if (event.data.type === 'FTJ_SCHEDULE_REMINDER') {
+    const { delayMs = 60000, title = 'Tokens Groq disponibles ! 🚀', options = {} } = event.data;
+    setTimeout(() => {
+      self.registration.showNotification(title, {
+        body: 'Le délai d\'attente est écoulé. Vos quotas sont réinitialisés, vous pouvez relancer votre requête.',
+        icon: '/favicon.svg',
+        badge: '/favicon.svg',
+        tag: 'groq-token-available',
+        data: { url: '/' },
+        ...options
+      });
+    }, delayMs);
+  }
+});
+
+/**
  * Notifications Push (Web Push API)
  */
 self.addEventListener('push', (event) => {

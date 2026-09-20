@@ -4,6 +4,7 @@
  */
 
 const { getGroqClient, getModelName } = require('./groqService');
+const { isGroqRateLimitError, parseGroqWaitTime, createGroqRateLimitPayload } = require('./utils/groqErrorHandler');
 
 /**
  * Valide et normalise la structure retournée par Groq
@@ -241,6 +242,15 @@ Directives de précision :
     };
   } catch (err) {
     console.error('[cvGroqService] Erreur appel Groq pour CV:', err);
+    if (isGroqRateLimitError(err)) {
+      const waitInfo = parseGroqWaitTime(err);
+      const customErr = new Error(`Il n'y a plus assez de tokens Groq disponibles pour le moment. Veuillez retenter dans ${waitInfo.formatted}.`);
+      customErr.isGroqRateLimit = true;
+      customErr.status = 429;
+      customErr.retryAfterSeconds = waitInfo.totalSeconds;
+      customErr.retryAfterFormatted = waitInfo.formatted;
+      throw customErr;
+    }
     throw new Error(`Échec de l'adaptation des critères par Groq : ${err.message}`);
   }
 }
@@ -324,9 +334,10 @@ Ne renvoie aucun texte en dehors du JSON pur.`;
 
   const scoredResultsMap = new Map();
 
+  let lastRateLimitErr = null;
   const batchPromises = batches.map(async (batch, batchIdx) => {
-    const compactJobs = batch.items.map((job, localIdx) => ({
-      index: localIdx,
+    const compactJobs = batch.items.map((job, idx) => ({
+      index: idx,
       title: job.title || '',
       company: job.company || '',
       location: job.location || '',
@@ -371,6 +382,9 @@ Ne renvoie aucun texte en dehors du JSON pur.`;
         }
       });
     } catch (err) {
+      if (isGroqRateLimitError(err)) {
+        lastRateLimitErr = err;
+      }
       console.warn(`[cvGroqService] Avertissement sur le lot ${batchIdx + 1}/${batches.length}:`, err.message);
     }
   });
@@ -378,7 +392,7 @@ Ne renvoie aucun texte en dehors du JSON pur.`;
   await Promise.allSettled(batchPromises);
 
   // Fusionner les résultats avec les offres initiales
-  return jobs.map((job, idx) => {
+  const finalJobs = jobs.map((job, idx) => {
     const key = job.id || `idx_${idx}`;
     const groqEval = scoredResultsMap.get(key);
     if (groqEval) {
@@ -392,6 +406,12 @@ Ne renvoie aucun texte en dehors du JSON pur.`;
     }
     return job;
   });
+
+  if (lastRateLimitErr && scoredResultsMap.size === 0) {
+    finalJobs.groqRateLimit = createGroqRateLimitPayload(lastRateLimitErr, "l'évaluation des offres");
+  }
+
+  return finalJobs;
 }
 
 module.exports = {

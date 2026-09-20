@@ -10,6 +10,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const aiStatusBadge = document.getElementById('aiStatusBadge');
   const aiStatusText = document.getElementById('aiStatusText');
   const apiKeyBanner = document.getElementById('apiKeyBanner');
+  const groqRateLimitGlobalBanner = document.getElementById('groqRateLimitGlobalBanner');
+  const cvGroqRateLimitBanner = document.getElementById('cvGroqRateLimitBanner');
+  const modalGroqRateLimitBanner = document.getElementById('modalGroqRateLimitBanner');
 
   // Contrôles du Cache Local (Cookies, localStorage & IndexedDB)
   const cacheStatusBadge = document.getElementById('cacheStatusBadge');
@@ -234,6 +237,385 @@ document.addEventListener('DOMContentLoaded', () => {
       aiStatusBadge.innerHTML = `<span class="w-2.5 h-2.5 rounded-full bg-rose-500" aria-hidden="true"></span><span>Serveur hors ligne</span>`;
     }
   }
+
+  // =========================================================================
+  // GESTIONNAIRE D'ÉPUISEMENT DES TOKENS GROQ & RAPPELS PWA (2026)
+  // =========================================================================
+
+  let activeReminderTimeout = null;
+  let activeCountdownInterval = null;
+
+  /**
+   * Détecte si l'application s'exécute dans un contexte PWA
+   * (Mode autonome/standalone, TWA, URL avec ?pwa=1, ou contrôlé par un Service Worker actif)
+   */
+  function isPwa() {
+    const isStandalone = (
+      (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
+      window.navigator.standalone === true ||
+      (window.matchMedia && window.matchMedia('(display-mode: fullscreen)').matches) ||
+      (window.matchMedia && window.matchMedia('(display-mode: minimal-ui)').matches) ||
+      (document.referrer && document.referrer.includes('android-app://'))
+    );
+    const urlPwa = new URLSearchParams(window.location.search).has('pwa');
+    const swControlled = Boolean(navigator.serviceWorker && navigator.serviceWorker.controller);
+    return Boolean(isStandalone || urlPwa || swControlled || window.__FORCE_PWA__);
+  }
+
+  /**
+   * Vérifie si une erreur correspond à un épuisement de tokens ou rate limit Groq (HTTP 429)
+   */
+  function isGroqRateLimitError(err) {
+    if (!err) return false;
+    if (err.isGroqRateLimit) return true;
+    if (err.status === 429 || err.statusCode === 429) return true;
+    const msg = (typeof err === 'string' ? err : `${err.message || ''} ${err.error || ''} ${JSON.stringify(err.data || '')}`).toLowerCase();
+    return (
+      msg.includes('rate limit') ||
+      msg.includes('tokens per minute') ||
+      msg.includes('tokens per day') ||
+      msg.includes('requests per minute') ||
+      msg.includes('tpm') ||
+      msg.includes('rpm') ||
+      msg.includes('tpd') ||
+      msg.includes('quota') ||
+      msg.includes('token groq') ||
+      msg.includes('tokens groq') ||
+      msg.includes('trop de requêtes') ||
+      msg.includes('try again in') ||
+      (msg.includes('429') && (msg.includes('groq') || msg.includes('limit')))
+    );
+  }
+
+  function parseDurationStringToSeconds(str) {
+    if (!str || typeof str !== 'string') return 0;
+    const s = str.trim().toLowerCase();
+    let hours = 0, minutes = 0, seconds = 0;
+
+    const msMatch = s.match(/(\d+(?:\.\d+)?)\s*ms/);
+    if (msMatch) seconds += parseFloat(msMatch[1]) / 1000;
+
+    const h = s.match(/(\d+(?:\.\d+)?)\s*h/);
+    if (h) hours = parseFloat(h[1]);
+
+    const m = s.match(/(\d+(?:\.\d+)?)\s*m(?!s)/);
+    if (m) minutes = parseFloat(m[1]);
+
+    const sec = s.match(/(\d+(?:\.\d+)?)\s*(?:s|sec)(?!ms)/);
+    if (sec && !msMatch) seconds += parseFloat(sec[1]);
+
+    if (!h && !m && !sec && !msMatch && /^\d+(?:\.\d+)?$/.test(s)) {
+      const num = parseFloat(s);
+      if (!isNaN(num)) seconds = num;
+    }
+    const total = Math.ceil(hours * 3600 + minutes * 60 + seconds);
+    return total > 0 ? total : 0;
+  }
+
+  function formatDurationFr(totalSeconds) {
+    const sec = Math.max(0, Math.ceil(Number(totalSeconds) || 0));
+    if (sec <= 0) return 'quelques secondes';
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = sec % 60;
+    const parts = [];
+    if (h > 0) parts.push(`${h} h`);
+    if (m > 0) parts.push(`${m} min`);
+    if (s > 0 || parts.length === 0) parts.push(`${s} s`);
+    return parts.join(' ');
+  }
+
+  function extractGroqWaitTime(errorOrData) {
+    if (errorOrData && errorOrData.retryAfterSeconds) {
+      return {
+        totalSeconds: errorOrData.retryAfterSeconds,
+        formatted: errorOrData.retryAfterFormatted || formatDurationFr(errorOrData.retryAfterSeconds)
+      };
+    }
+    let text = typeof errorOrData === 'string' ? errorOrData : `${errorOrData?.message || ''} ${errorOrData?.error || ''} ${JSON.stringify(errorOrData?.data || '')}`;
+    let totalSeconds = 0;
+    const match = text.match(/(?:try again in|retente[rz] dans|r[ée]essayer dans|attendre|in)\s+([0-9]+(?:\.[0-9]+)?[hms\s\.\d]+)/i);
+    if (match && match[1]) {
+      totalSeconds = parseDurationStringToSeconds(match[1]);
+    }
+    if (!totalSeconds) totalSeconds = 60;
+    return {
+      totalSeconds,
+      formatted: formatDurationFr(totalSeconds)
+    };
+  }
+
+  /**
+   * Demande ou vérifie l'autorisation des notifications du système
+   */
+  async function requestNotificationPermission() {
+    if (!('Notification' in window)) {
+      return 'unsupported';
+    }
+    if (Notification.permission === 'granted') {
+      return 'granted';
+    }
+    if (Notification.permission === 'denied') {
+      return 'denied';
+    }
+    try {
+      const perm = await Notification.requestPermission();
+      return perm;
+    } catch {
+      return 'denied';
+    }
+  }
+
+  /**
+   * Déclenche la notification système après expiration du délai
+   */
+  function triggerGroqReminderNotification() {
+    localStorage.removeItem('ftj_groq_reminder');
+    if (activeReminderTimeout) clearTimeout(activeReminderTimeout);
+    activeReminderTimeout = null;
+
+    const notifTitle = 'Tokens Groq disponibles ! 🚀';
+    const notifOptions = {
+      body: 'Le temps d\'attente est écoulé. Vos quotas sont réinitialisés, vous pouvez relancer votre requête.',
+      icon: '/favicon.svg',
+      badge: '/favicon.svg',
+      tag: 'groq-token-available',
+      renotify: true,
+      data: { url: '/' }
+    };
+
+    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+      navigator.serviceWorker.ready.then(reg => {
+        if (reg && reg.showNotification) {
+          reg.showNotification(notifTitle, notifOptions);
+        } else if ('Notification' in window && Notification.permission === 'granted') {
+          new Notification(notifTitle, notifOptions);
+        }
+      }).catch(() => {
+        if ('Notification' in window && Notification.permission === 'granted') {
+          new Notification(notifTitle, notifOptions);
+        }
+      });
+    } else if ('Notification' in window && Notification.permission === 'granted') {
+      new Notification(notifTitle, notifOptions);
+    }
+
+    showToastNotification('🎉 Tokens Groq de nouveau disponibles ! Vous pouvez réessayer.', true);
+
+    document.querySelectorAll('.ftj-groq-ratelimit-banner').forEach(b => {
+      updateBannerToReady(b);
+    });
+  }
+
+  function updateBannerToReady(banner) {
+    if (!banner) return;
+    banner.className = 'ftj-groq-ratelimit-banner rounded-2xl border border-emerald-300 bg-emerald-50 p-4 text-emerald-950 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3';
+    banner.innerHTML = `
+      <div class="flex items-center gap-3">
+        <span class="text-2xl" aria-hidden="true">🎉</span>
+        <div>
+          <div class="font-bold text-sm text-emerald-950">Tokens Groq de nouveau disponibles !</div>
+          <div class="text-xs text-emerald-800">Le délai d'attente est écoulé. Vous pouvez relancer vos opérations avec l'IA.</div>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <button type="button" class="ftj-retry-banner-btn inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-sm transition-all focus:outline-none">
+          <span>🔄 Réessayer maintenant</span>
+        </button>
+        <button type="button" class="ftj-close-banner-btn text-emerald-700 hover:text-emerald-900 font-bold text-lg px-2 py-1" title="Fermer">&times;</button>
+      </div>
+    `;
+    banner.querySelector('.ftj-close-banner-btn')?.addEventListener('click', () => {
+      banner.classList.add('hidden');
+    });
+    banner.querySelector('.ftj-retry-banner-btn')?.addEventListener('click', () => {
+      banner.classList.add('hidden');
+      if (typeof banner._retryAction === 'function') {
+        banner._retryAction();
+      }
+    });
+  }
+
+  /**
+   * Affiche la bannière d'alerte pour l'épuisement de tokens Groq
+   * avec compte à rebours dynamique et bouton "Mettre un rappel" si PWA
+   */
+  function showGroqTokenLimitBanner({ retryAfterSeconds, formattedDuration, container, onRetry, customMessage }) {
+    const targetContainer = container || groqRateLimitGlobalBanner;
+    if (!targetContainer) return;
+
+    const seconds = Math.max(3, retryAfterSeconds || 60);
+    const initialDurationStr = formattedDuration || formatDurationFr(seconds);
+    const isRunningPwa = isPwa();
+    const targetTime = Date.now() + (seconds * 1000);
+
+    targetContainer.classList.remove('hidden');
+    targetContainer._retryAction = onRetry;
+
+    targetContainer.className = 'ftj-groq-ratelimit-banner rounded-2xl border border-amber-300 bg-gradient-to-br from-amber-50 via-orange-50 to-amber-50 p-4 text-amber-950 shadow-md transition-all space-y-3';
+
+    targetContainer.innerHTML = `
+      <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+        <div class="flex items-start gap-3">
+          <span class="text-2xl mt-0.5" aria-hidden="true">⏳</span>
+          <div class="space-y-0.5">
+            <div class="font-extrabold text-sm text-amber-950 flex items-center gap-2 flex-wrap">
+              <span>Plus assez de tokens Groq disponibles</span>
+              <span class="px-2 py-0.5 rounded-full text-[11px] font-black bg-amber-200/80 text-amber-900 border border-amber-300">
+                Quota temporaire
+              </span>
+            </div>
+            <p class="text-xs sm:text-sm text-amber-900 leading-relaxed">
+              ${customMessage ? escapeHtml(customMessage) + ' ' : ''}Veuillez retenter dans <strong class="ftj-countdown font-black text-amber-950 bg-amber-200/60 px-1.5 py-0.5 rounded">${initialDurationStr}</strong>.
+            </p>
+          </div>
+        </div>
+        
+        <!-- Bouton Mettre un rappel (affiché si en PWA) -->
+        <div class="flex items-center gap-2 self-end sm:self-center shrink-0">
+          ${isRunningPwa ? `
+            <button
+              type="button"
+              class="ftj-pwa-reminder-btn inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-bold text-xs shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              title="Activer un rappel par notification quand les tokens seront de nouveau utilisables"
+            >
+              <span aria-hidden="true">🔔</span>
+              <span class="ftj-reminder-label">Mettre un rappel</span>
+            </button>
+          ` : ''}
+          <button
+            type="button"
+            class="ftj-close-banner-btn text-amber-700 hover:text-amber-900 text-xl font-bold p-1 leading-none rounded-lg hover:bg-amber-200/50 transition-colors"
+            aria-label="Fermer cette notification"
+          >
+            &times;
+          </button>
+        </div>
+      </div>
+      <div class="ftj-permission-notice hidden text-xs font-semibold text-rose-800 bg-rose-100 border border-rose-300 px-3 py-1.5 rounded-xl"></div>
+    `;
+
+    const countdownEl = targetContainer.querySelector('.ftj-countdown');
+    const reminderBtn = targetContainer.querySelector('.ftj-pwa-reminder-btn');
+    const closeBtn = targetContainer.querySelector('.ftj-close-banner-btn');
+    const permNotice = targetContainer.querySelector('.ftj-permission-notice');
+
+    closeBtn?.addEventListener('click', () => {
+      targetContainer.classList.add('hidden');
+    });
+
+    // Si un rappel est déjà en cours dans le localStorage
+    const existingReminder = localStorage.getItem('ftj_groq_reminder');
+    if (existingReminder && reminderBtn) {
+      try {
+        const parsed = JSON.parse(existingReminder);
+        if (parsed.targetTime > Date.now()) {
+          reminderBtn.disabled = true;
+          reminderBtn.className = 'inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 text-white font-bold text-xs shadow-sm opacity-90 cursor-default';
+          const label = reminderBtn.querySelector('.ftj-reminder-label');
+          if (label) label.textContent = 'Rappel activé ✅';
+        }
+      } catch {}
+    }
+
+    reminderBtn?.addEventListener('click', async () => {
+      const perm = await requestNotificationPermission();
+      if (perm === 'granted') {
+        const currentSec = Math.max(1, Math.ceil((targetTime - Date.now()) / 1000));
+        localStorage.setItem('ftj_groq_reminder', JSON.stringify({
+          targetTime,
+          seconds: currentSec,
+          formatted: formatDurationFr(currentSec)
+        }));
+
+        reminderBtn.disabled = true;
+        reminderBtn.className = 'inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 text-white font-bold text-xs shadow-sm opacity-90 cursor-default';
+        const label = reminderBtn.querySelector('.ftj-reminder-label');
+        if (label) label.textContent = 'Rappel activé ✅';
+
+        if (permNotice) permNotice.classList.add('hidden');
+        showToastNotification(`🔔 Rappel programmé ! Notification dans ${formatDurationFr(currentSec)}.`, true);
+
+        if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+          navigator.serviceWorker.controller.postMessage({
+            type: 'FTJ_SCHEDULE_REMINDER',
+            delayMs: currentSec * 1000,
+            title: 'Tokens Groq disponibles ! 🚀',
+            options: {
+              body: 'Le temps d\'attente est écoulé. Vos quotas sont réinitialisés, vous pouvez relancer votre requête.',
+              icon: '/favicon.svg',
+              badge: '/favicon.svg',
+              tag: 'groq-token-available'
+            }
+          });
+        }
+
+        if (activeReminderTimeout) clearTimeout(activeReminderTimeout);
+        activeReminderTimeout = setTimeout(() => {
+          triggerGroqReminderNotification();
+        }, currentSec * 1000);
+      } else if (perm === 'denied') {
+        if (permNotice) {
+          permNotice.textContent = '⚠️ Notifications désactivées. Veuillez autoriser les notifications dans les paramètres de votre navigateur/application pour recevoir le rappel.';
+          permNotice.classList.remove('hidden');
+        }
+      } else {
+        if (permNotice) {
+          permNotice.textContent = '⚠️ Les notifications ne sont pas prises en charge sur ce terminal.';
+          permNotice.classList.remove('hidden');
+        }
+      }
+    });
+
+    // Compte à rebours temps réel
+    if (activeCountdownInterval) clearInterval(activeCountdownInterval);
+    activeCountdownInterval = setInterval(() => {
+      const remainingSec = Math.ceil((targetTime - Date.now()) / 1000);
+      if (remainingSec <= 0) {
+        clearInterval(activeCountdownInterval);
+        activeCountdownInterval = null;
+        updateBannerToReady(targetContainer);
+        if (localStorage.getItem('ftj_groq_reminder')) {
+          triggerGroqReminderNotification();
+        }
+      } else {
+        if (countdownEl) {
+          countdownEl.textContent = formatDurationFr(remainingSec);
+        }
+      }
+    }, 1000);
+  }
+
+  /**
+   * Reprend un rappel en cours au chargement de la page
+   */
+  function checkAndResumeActiveReminder() {
+    const saved = localStorage.getItem('ftj_groq_reminder');
+    if (!saved) return;
+    try {
+      const reminder = JSON.parse(saved);
+      const now = Date.now();
+      if (reminder.targetTime <= now) {
+        triggerGroqReminderNotification();
+      } else {
+        const remainingSec = Math.ceil((reminder.targetTime - now) / 1000);
+        showGroqTokenLimitBanner({
+          retryAfterSeconds: remainingSec,
+          formattedDuration: formatDurationFr(remainingSec),
+          customMessage: "Un rappel pour les tokens Groq est actuellement en cours."
+        });
+        if (activeReminderTimeout) clearTimeout(activeReminderTimeout);
+        activeReminderTimeout = setTimeout(() => {
+          triggerGroqReminderNotification();
+        }, remainingSec * 1000);
+      }
+    } catch {
+      localStorage.removeItem('ftj_groq_reminder');
+    }
+  }
+
+  // Vérification au chargement
+  checkAndResumeActiveReminder();
 
   // ========================================================
   // GESTION DE LA PERSISTANCE LOCALE & DU CACHE (COOKIES, LOCALSTORAGE, INDEXEDDB)
@@ -559,9 +941,37 @@ Pas de PHP ni de WordPress`;
         // Réapplication immédiate du tri et des filtres
         applyAllFiltersAndSort();
         await saveCurrentAppState(7);
+
+        if (data.groqRateLimit) {
+          showGroqTokenLimitBanner({
+            retryAfterSeconds: data.groqRateLimit.retryAfterSeconds,
+            formattedDuration: data.groqRateLimit.retryAfterFormatted,
+            container: cvGroqRateLimitBanner,
+            customMessage: "Évaluation CV partielle : plus assez de tokens Groq disponibles pour noter toutes les offres.",
+            onRetry: () => recalculateAllCvScores(true)
+          });
+        }
+      } else if (data && data.isGroqRateLimit) {
+        showGroqTokenLimitBanner({
+          retryAfterSeconds: data.retryAfterSeconds,
+          formattedDuration: data.retryAfterFormatted,
+          container: cvGroqRateLimitBanner,
+          customMessage: "Évaluation CV reportée : plus assez de tokens Groq disponibles.",
+          onRetry: () => recalculateAllCvScores(true)
+        });
       }
     } catch (err) {
       console.warn('[Groq CV] Échec de l\'évaluation asynchrone Groq:', err);
+      if (isGroqRateLimitError(err) || err.data?.isGroqRateLimit || err.status === 429) {
+        const wait = extractGroqWaitTime(err.data || err);
+        showGroqTokenLimitBanner({
+          retryAfterSeconds: wait.totalSeconds,
+          formattedDuration: wait.formatted,
+          container: cvGroqRateLimitBanner,
+          customMessage: "Évaluation CV en pause : plus assez de tokens Groq disponibles.",
+          onRetry: () => recalculateAllCvScores(true)
+        });
+      }
     } finally {
       isScoringCvWithGroq = false;
       updateCvScoringStatusUI(false);
@@ -771,7 +1181,10 @@ Pas de PHP ni de WordPress`;
 
         const data = await response.json();
         if (!response.ok || !data.success) {
-          throw new Error(data.error || 'Erreur lors de l\'adaptation des critères par Groq.');
+          const customErr = new Error(data.error || 'Erreur lors de l\'adaptation des critères par Groq.');
+          customErr.data = data;
+          customErr.status = response.status;
+          throw customErr;
         }
 
         currentCvCriteria = data.criteria;
@@ -788,6 +1201,9 @@ Pas de PHP ni de WordPress`;
         applyAllFiltersAndSort();
         await saveCurrentAppState(7);
 
+        // Masquer une éventuelle alerte de rate limit précédente
+        if (cvGroqRateLimitBanner) cvGroqRateLimitBanner.classList.add('hidden');
+
         adaptCvGroqBtn.className = 'inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-emerald-600 bg-emerald-600 text-white font-bold text-xs shadow-sm transition-all focus:outline-none min-h-[40px]';
         adaptCvGroqBtn.innerHTML = '<span>✅ Critères adaptés par Groq !</span>';
 
@@ -803,7 +1219,18 @@ Pas de PHP ni de WordPress`;
         }, 3000);
       } catch (err) {
         console.error('Erreur adaptation CV par Groq:', err);
-        alert(`Erreur Groq : ${err.message}`);
+        if (isGroqRateLimitError(err) || err.data?.isGroqRateLimit || err.status === 429) {
+          const wait = extractGroqWaitTime(err.data || err);
+          showGroqTokenLimitBanner({
+            retryAfterSeconds: wait.totalSeconds,
+            formattedDuration: wait.formatted,
+            container: cvGroqRateLimitBanner,
+            customMessage: "Impossible d'adapter le CV actuellement : plus assez de tokens Groq disponibles.",
+            onRetry: () => adaptCvGroqBtn.click()
+          });
+        } else {
+          alert(`Erreur Groq : ${err.message}`);
+        }
         adaptCvGroqBtn.innerHTML = originalHtml;
         adaptCvGroqBtn.disabled = false;
       }
@@ -963,14 +1390,38 @@ Pas de PHP ni de WordPress`;
       const data = await response.json();
 
       if (!response.ok || !data.success) {
-        throw new Error(data.error || 'Erreur lors de la recherche.');
+        const customErr = new Error(data.error || 'Erreur lors de la recherche.');
+        customErr.data = data;
+        customErr.status = response.status;
+        throw customErr;
       }
 
       stopProgressAnimation();
       displayResults(data);
+
+      if (data.groqRateLimit) {
+        showGroqTokenLimitBanner({
+          retryAfterSeconds: data.groqRateLimit.retryAfterSeconds,
+          formattedDuration: data.groqRateLimit.retryAfterFormatted,
+          container: groqRateLimitGlobalBanner,
+          customMessage: "La recherche a été réalisée en mode standard : plus assez de tokens Groq disponibles pour l'analyse sémantique.",
+          onRetry: () => submitBtn.click()
+        });
+      }
     } catch (error) {
       stopProgressAnimation();
-      alert(`Erreur : ${error.message}`);
+      if (isGroqRateLimitError(error) || error.data?.isGroqRateLimit || error.status === 429) {
+        const wait = extractGroqWaitTime(error.data || error);
+        showGroqTokenLimitBanner({
+          retryAfterSeconds: wait.totalSeconds,
+          formattedDuration: wait.formatted,
+          container: groqRateLimitGlobalBanner,
+          customMessage: "Recherche interrompue : plus assez de tokens Groq disponibles.",
+          onRetry: () => submitBtn.click()
+        });
+      } else {
+        alert(`Erreur : ${error.message}`);
+      }
     }
   });
 
@@ -2177,6 +2628,7 @@ Pas de PHP ni de WordPress`;
     jobModal.classList.remove('hidden');
     modalLoading.classList.remove('hidden');
     modalContent.innerHTML = '';
+    if (modalGroqRateLimitBanner) modalGroqRateLimitBanner.classList.add('hidden');
     modalCloseBtn.focus();
 
     // Réinitialisation de l'historique de chat pour cette offre
@@ -2193,12 +2645,35 @@ Pas de PHP ni de WordPress`;
       modalLoading.classList.add('hidden');
 
       if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Erreur lors de l\'analyse');
+        const customErr = new Error(data.error || 'Erreur lors de l\'analyse');
+        customErr.data = data;
+        customErr.status = res.status;
+        throw customErr;
       }
 
       renderModalAnalysis(job, data.analysis);
+
+      if (data.groqRateLimit) {
+        showGroqTokenLimitBanner({
+          retryAfterSeconds: data.groqRateLimit.retryAfterSeconds,
+          formattedDuration: data.groqRateLimit.retryAfterFormatted,
+          container: modalGroqRateLimitBanner,
+          customMessage: "Analyse générée en mode standard : plus assez de tokens Groq disponibles pour le modèle complet.",
+          onRetry: () => openJobModal(job)
+        });
+      }
     } catch (err) {
       modalLoading.classList.add('hidden');
+      if (isGroqRateLimitError(err) || err.data?.isGroqRateLimit || err.status === 429) {
+        const wait = extractGroqWaitTime(err.data || err);
+        showGroqTokenLimitBanner({
+          retryAfterSeconds: wait.totalSeconds,
+          formattedDuration: wait.formatted,
+          container: modalGroqRateLimitBanner,
+          customMessage: "Impossible de compléter l'analyse : plus assez de tokens Groq disponibles.",
+          onRetry: () => openJobModal(job)
+        });
+      }
       modalContent.innerHTML = `
         <div class="text-center py-8 space-y-4">
           <div class="text-3xl" aria-hidden="true">⚠️</div>
@@ -2415,14 +2890,37 @@ Pas de PHP ni de WordPress`;
       argLoading.classList.add('hidden');
 
       if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Erreur lors de la génération de l\'argumentaire');
+        const customErr = new Error(data.error || 'Erreur lors de la génération de l\'argumentaire');
+        customErr.data = data;
+        customErr.status = res.status;
+        throw customErr;
       }
 
       argumentairesCache[job.id] = data.argumentaire;
       renderArgumentaire(job, data.argumentaire, data.isAiPowered);
+
+      if (data.groqRateLimit) {
+        showGroqTokenLimitBanner({
+          retryAfterSeconds: data.groqRateLimit.retryAfterSeconds,
+          formattedDuration: data.groqRateLimit.retryAfterFormatted,
+          container: modalGroqRateLimitBanner,
+          customMessage: "Argumentaire généré en mode standard : plus assez de tokens Groq disponibles pour le modèle complet.",
+          onRetry: () => ensureArgumentaireLoaded(job, true)
+        });
+      }
     } catch (err) {
       console.error('Erreur chargement argumentaire:', err);
       argLoading.classList.add('hidden');
+      if (isGroqRateLimitError(err) || err.data?.isGroqRateLimit || err.status === 429) {
+        const wait = extractGroqWaitTime(err.data || err);
+        showGroqTokenLimitBanner({
+          retryAfterSeconds: wait.totalSeconds,
+          formattedDuration: wait.formatted,
+          container: modalGroqRateLimitBanner,
+          customMessage: "Impossible de générer l'argumentaire : plus assez de tokens Groq disponibles.",
+          onRetry: () => ensureArgumentaireLoaded(job, true)
+        });
+      }
       argContent.innerHTML = `
         <div class="text-center py-8 space-y-4">
           <div class="text-3xl" aria-hidden="true">⚠️</div>
@@ -2914,8 +3412,37 @@ Pas de PHP ni de WordPress`;
       }
     } else if (data.type === 'done') {
       finishStreaming(data.fullText || currentStreamingText);
+      if (data.isGroqRateLimit) {
+        showGroqTokenLimitBanner({
+          retryAfterSeconds: data.retryAfterSeconds,
+          formattedDuration: data.retryAfterFormatted,
+          container: modalGroqRateLimitBanner,
+          customMessage: "Le coach Groq a atteint la limite de tokens par minute.",
+          onRetry: () => {
+            const lastMsg = chatMessagesHistory.filter(m => m.role === 'user').pop();
+            if (lastMsg) sendChatMessage(lastMsg.content);
+          }
+        });
+      }
     } else if (data.type === 'error') {
-      finishStreaming("⚠️ Erreur : " + (data.error || 'Une erreur est survenue lors de la réponse de Groq.'));
+      const isRateLimit = data.isGroqRateLimit || isGroqRateLimitError(data.error);
+      if (isRateLimit) {
+        const wait = extractGroqWaitTime(data);
+        const msg = `⚠️ Il n'y a plus assez de tokens Groq disponibles pour le moment. Veuillez retenter dans ${wait.formatted}.`;
+        finishStreaming(msg);
+        showGroqTokenLimitBanner({
+          retryAfterSeconds: wait.totalSeconds,
+          formattedDuration: wait.formatted,
+          container: modalGroqRateLimitBanner,
+          customMessage: "Le coach Groq a atteint la limite de tokens par minute.",
+          onRetry: () => {
+            const lastMsg = chatMessagesHistory.filter(m => m.role === 'user').pop();
+            if (lastMsg) sendChatMessage(lastMsg.content);
+          }
+        });
+      } else {
+        finishStreaming("⚠️ Erreur : " + (data.error || 'Une erreur est survenue lors de la réponse de Groq.'));
+      }
     }
   }
 

@@ -4,6 +4,7 @@
  */
 
 const { getGroqClient, getModelName } = require('../groqService');
+const { isGroqRateLimitError, createGroqRateLimitPayload } = require('../utils/groqErrorHandler');
 const { buildChatSystemPrompt } = require('../domain/jobContextBuilder');
 
 /**
@@ -66,6 +67,7 @@ async function streamChatConversation({ job, cvCriteria, messages, onChunk, onDo
   let success = false;
   let fullAccumulated = '';
 
+  let lastRateLimitErr = null;
   for (const model of candidateModels) {
     try {
       console.log(`[ChatService] Démarrage du streaming Groq (${model}) pour session de chat...`);
@@ -93,14 +95,23 @@ async function streamChatConversation({ job, cvCriteria, messages, onChunk, onDo
       onDone(fullAccumulated);
       break;
     } catch (err) {
+      if (isGroqRateLimitError(err)) {
+        lastRateLimitErr = err;
+      }
       console.warn(`[ChatService] Erreur stream modèle ${model} (${err.message}). Essai du suivant...`);
     }
   }
 
   if (!success) {
-    const errorMsg = "Désolé, une indisponibilité momentanée du service Groq s'est produite. Veuillez réessayer dans quelques instants.";
-    onChunk(errorMsg);
-    onDone(errorMsg);
+    if (lastRateLimitErr) {
+      const rlPayload = createGroqRateLimitPayload(lastRateLimitErr, 'le coach Groq');
+      onChunk(rlPayload.message);
+      onDone(rlPayload.message, rlPayload);
+    } else {
+      const errorMsg = "Désolé, une indisponibilité momentanée du service Groq s'est produite. Veuillez réessayer dans quelques instants.";
+      onChunk(errorMsg);
+      onDone(errorMsg, { isGroqRateLimit: false });
+    }
   }
 }
 

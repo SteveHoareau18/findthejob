@@ -94,11 +94,14 @@ function initChatWebSocketServer(httpServer) {
               }));
             }
           },
-          onDone: (fullText) => {
+          onDone: (fullText, meta = null) => {
             if (ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({
                 type: 'done',
-                fullText
+                fullText,
+                isGroqRateLimit: Boolean(meta?.isGroqRateLimit),
+                retryAfterSeconds: meta?.retryAfterSeconds || null,
+                retryAfterFormatted: meta?.retryAfterFormatted || null
               }));
             }
           },
@@ -106,7 +109,10 @@ function initChatWebSocketServer(httpServer) {
             if (ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({
                 type: 'error',
-                error: err.message || 'Erreur lors de la génération'
+                error: err.message || 'Erreur lors de la génération',
+                isGroqRateLimit: Boolean(err.isGroqRateLimit),
+                retryAfterSeconds: err.retryAfterSeconds || null,
+                retryAfterFormatted: err.retryAfterFormatted || null
               }));
             }
           }

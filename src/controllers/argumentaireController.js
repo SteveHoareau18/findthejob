@@ -4,6 +4,7 @@
  */
 
 const { generateArgumentaire } = require('../services/argumentaireService');
+const { isGroqRateLimitError, parseGroqWaitTime } = require('../utils/groqErrorHandler');
 
 /**
  * Endpoint POST /api/jobs/argumentaire
@@ -25,6 +26,16 @@ async function handleGenerateArgumentaire(req, res) {
     return res.json(result);
   } catch (error) {
     console.error('[ArgumentaireController] Erreur :', error);
+    if (isGroqRateLimitError(error)) {
+      const waitInfo = parseGroqWaitTime(error);
+      return res.status(429).json({
+        success: false,
+        isGroqRateLimit: true,
+        retryAfterSeconds: waitInfo.totalSeconds,
+        retryAfterFormatted: waitInfo.formatted,
+        error: `Il n'y a plus assez de tokens Groq disponibles pour le moment. Veuillez retenter dans ${waitInfo.formatted}.`
+      });
+    }
     return res.status(500).json({
       success: false,
       error: 'Erreur interne lors de la génération de l\'argumentaire.',

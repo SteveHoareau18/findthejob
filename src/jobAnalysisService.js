@@ -1,6 +1,7 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
 const { getGroqClient } = require('./groqService');
+const { isGroqRateLimitError, createGroqRateLimitPayload } = require('./utils/groqErrorHandler');
 require('dotenv').config();
 
 const detailHttpClient = axios.create({
@@ -105,6 +106,7 @@ Tu dois répondre UNIQUEMENT avec un objet JSON valide structuré comme suit :
 Contenu de l'offre :
 ${fullContent.substring(0, 3000)}`;
 
+  let lastRateLimitErr = null;
   for (const currentModel of candidateModels) {
     try {
       const completion = await client.chat.completions.create({
@@ -127,17 +129,26 @@ ${fullContent.substring(0, 3000)}`;
         analysis: parsed
       };
     } catch (err) {
+      if (isGroqRateLimitError(err)) {
+        lastRateLimitErr = err;
+      }
       console.warn(`[JobAnalysisService] Modèle ${currentModel} indisponible (${err.message}). Essai du suivant...`);
     }
   }
 
   // Si tous les modèles échouent
-  return {
+  const fallbackResult = {
     success: true,
     isAiPowered: false,
     job: { title, company, location, contractType, source, url },
     analysis: generateFallbackAnalysis(jobData, fullContent)
   };
+
+  if (lastRateLimitErr) {
+    fallbackResult.groqRateLimit = createGroqRateLimitPayload(lastRateLimitErr, "l'analyse approfondie de l'offre");
+  }
+
+  return fallbackResult;
 }
 
 /**

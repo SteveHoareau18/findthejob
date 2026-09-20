@@ -5,6 +5,7 @@ const path = require('path');
 require('dotenv').config();
 
 const { parseUserQueryAndExclusions, filterAndScoreJobs, getGroqClient } = require('./src/groqService');
+const { isGroqRateLimitError, parseGroqWaitTime } = require('./src/utils/groqErrorHandler');
 const { analyzeJobAndGetTips } = require('./src/jobAnalysisService');
 const { adaptCvCriteriaWithGroq, scoreJobsWithCvGroq } = require('./src/cvGroqService');
 const { handleGenerateArgumentaire } = require('./src/controllers/argumentaireController');
@@ -112,6 +113,7 @@ app.post('/api/search', async (req, res) => {
       executionTimeSeconds: elapsedSeconds,
       isAiPowered: analysis.isAiPowered,
       warning: analysis.warning || null,
+      groqRateLimit: analysis.groqRateLimit || allScoredJobs.groqRateLimit || null,
       stats: {
         rawScraped: rawJobs.length,
         total: allScoredJobs.length,
@@ -124,6 +126,16 @@ app.post('/api/search', async (req, res) => {
     });
   } catch (error) {
     console.error('[Erreur API /api/search]:', error);
+    if (isGroqRateLimitError(error)) {
+      const waitInfo = parseGroqWaitTime(error);
+      return res.status(429).json({
+        success: false,
+        isGroqRateLimit: true,
+        retryAfterSeconds: waitInfo.totalSeconds,
+        retryAfterFormatted: waitInfo.formatted,
+        error: `Il n'y a plus assez de tokens Groq disponibles pour le moment. Veuillez retenter dans ${waitInfo.formatted}.`
+      });
+    }
     res.status(500).json({
       success: false,
       error: 'Une erreur est survenue lors de la recherche et du scraping des offres.',
@@ -147,6 +159,16 @@ app.post('/api/jobs/analyze', async (req, res) => {
     res.json(result);
   } catch (error) {
     console.error('[Erreur /api/jobs/analyze]:', error);
+    if (isGroqRateLimitError(error)) {
+      const waitInfo = parseGroqWaitTime(error);
+      return res.status(429).json({
+        success: false,
+        isGroqRateLimit: true,
+        retryAfterSeconds: waitInfo.totalSeconds,
+        retryAfterFormatted: waitInfo.formatted,
+        error: `Il n'y a plus assez de tokens Groq disponibles pour le moment. Veuillez retenter dans ${waitInfo.formatted}.`
+      });
+    }
     res.status(500).json({
       success: false,
       error: 'Erreur lors de l\'analyse approfondie de l\'offre.',
@@ -181,6 +203,16 @@ app.post('/api/cv/adapt-groq', async (req, res) => {
     res.json(result);
   } catch (error) {
     console.error('[Erreur /api/cv/adapt-groq]:', error);
+    if (error.isGroqRateLimit || isGroqRateLimitError(error)) {
+      const waitInfo = parseGroqWaitTime(error);
+      return res.status(429).json({
+        success: false,
+        isGroqRateLimit: true,
+        retryAfterSeconds: error.retryAfterSeconds || waitInfo.totalSeconds,
+        retryAfterFormatted: error.retryAfterFormatted || waitInfo.formatted,
+        error: error.message || `Il n'y a plus assez de tokens Groq disponibles pour le moment. Veuillez retenter dans ${waitInfo.formatted}.`
+      });
+    }
     res.status(500).json({
       success: false,
       error: error.message || 'Erreur lors de l\'adaptation des critères par Groq.'
@@ -209,10 +241,21 @@ app.post('/api/cv/score-jobs', async (req, res) => {
     res.json({
       success: true,
       isAiPowered: Boolean(getGroqClient()),
+      groqRateLimit: scoredJobs?.groqRateLimit || null,
       jobs: scoredJobs || jobs
     });
   } catch (error) {
     console.error('[Erreur /api/cv/score-jobs]:', error);
+    if (error.isGroqRateLimit || isGroqRateLimitError(error)) {
+      const waitInfo = parseGroqWaitTime(error);
+      return res.status(429).json({
+        success: false,
+        isGroqRateLimit: true,
+        retryAfterSeconds: error.retryAfterSeconds || waitInfo.totalSeconds,
+        retryAfterFormatted: error.retryAfterFormatted || waitInfo.formatted,
+        error: error.message || `Il n'y a plus assez de tokens Groq disponibles pour le moment. Veuillez retenter dans ${waitInfo.formatted}.`
+      });
+    }
     res.status(500).json({
       success: false,
       error: error.message || 'Erreur lors de l\'évaluation des offres par Groq.'

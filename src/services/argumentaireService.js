@@ -5,6 +5,7 @@
  */
 
 const { getGroqClient, getModelName } = require('../groqService');
+const { isGroqRateLimitError, createGroqRateLimitPayload } = require('../utils/groqErrorHandler');
 const { buildArgumentairePrompt } = require('../domain/jobContextBuilder');
 
 /**
@@ -38,6 +39,7 @@ async function generateArgumentaire(job, cvCriteria) {
     'openai/gpt-oss-20b'
   ].filter(Boolean);
 
+  let lastRateLimitErr = null;
   for (const model of candidateModels) {
     try {
       console.log(`[ArgumentaireService] Appel Groq (${model}) pour "${job.title}"...`);
@@ -67,16 +69,25 @@ async function generateArgumentaire(job, cvCriteria) {
         }
       };
     } catch (err) {
+      if (isGroqRateLimitError(err)) {
+        lastRateLimitErr = err;
+      }
       console.warn(`[ArgumentaireService] Échec avec le modèle ${model} (${err.message}). Tentative suivante...`);
     }
   }
 
   console.warn('[ArgumentaireService] Tous les modèles ont échoué. Basculement sur l\'argumentaire de secours.');
-  return {
+  const fallbackRes = {
     success: true,
     isAiPowered: false,
     argumentaire: generateFallbackArgumentaire(job, cvCriteria)
   };
+
+  if (lastRateLimitErr) {
+    fallbackRes.groqRateLimit = createGroqRateLimitPayload(lastRateLimitErr, "la génération de l'argumentaire");
+  }
+
+  return fallbackRes;
 }
 
 /**
