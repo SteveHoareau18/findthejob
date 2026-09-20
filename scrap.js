@@ -1,6 +1,7 @@
 const { execFile } = require('child_process');
 const axios = require('axios');
 const cheerio = require('cheerio');
+const { scrapeLinkedIn, scrapeLinkedInJobs } = require('./src/scrapers/linkedin');
 
 // Configuration HTTP avec headers réalistes simulant un navigateur complet
 const browserHeaders = {
@@ -43,54 +44,7 @@ function cleanSearchKeyword(query) {
     .replace(/\s+/g, ' ')
     .trim();
 }
-
-/**
- * 1. LINKEDIN JOBS (Guest API Public)
- * Supporte : France métropolitaine, DROM (Reunion, Guadeloupe, Martinique, Guyane, Mayotte), Europe
- */
-async function scrapeLinkedIn(searchTerm, location = 'France', limit = 25) {
-  try {
-    const cleanTerm = cleanSearchKeyword(searchTerm);
-    const term = encodeURIComponent(cleanTerm);
-    const loc = encodeURIComponent(location || 'France');
-    const url = `https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=${term}&location=${loc}&start=0`;
-
-    const res = await httpClient.get(url);
-    const $ = cheerio.load(res.data);
-    const jobs = [];
-
-    $('li').each((_, el) => {
-      if (jobs.length >= limit) return false;
-      const title = $(el).find('.base-search-card__title').text().trim();
-      const company = $(el).find('.base-search-card__subtitle').text().trim();
-      const jobLocation = $(el).find('.job-search-card__location').text().trim();
-      const link = $(el).find('a.base-card__full-link').attr('href');
-      const time = $(el).find('time').text().trim();
-
-      if (title) {
-        jobs.push({
-          id: `li-${Math.abs(hashString(link || title + company))}`,
-          title,
-          company: company || 'Entreprise sur LinkedIn',
-          location: jobLocation || location,
-          contractType: 'CDI / Plein temps',
-          salary: 'Selon profil',
-          description: `${title} chez ${company} à ${jobLocation}. Offre publiée sur LinkedIn.`,
-          tags: ['LinkedIn', location],
-          url: link ? link.split('?')[0] : 'https://www.linkedin.com/jobs',
-          source: 'LinkedIn',
-          date: time || 'Récemment'
-        });
-      }
-    });
-
-    console.log(`[Scraper LinkedIn] ✅ ${jobs.length} offres trouvées.`);
-    return jobs;
-  } catch (err) {
-    console.warn(`[Scraper LinkedIn] Erreur:`, err.message);
-    return [];
-  }
-}
+// 1. LINKEDIN JOBS : Délégué au module générique en couches ./src/scrapers/linkedin
 
 /**
  * 2. FRANCE TRAVAIL (Pôle Emploi) - VERSION RENFORCÉE
@@ -548,13 +502,37 @@ async function scrapeJobs({ query, keywords = [], primaryTitle = '', location = 
   const isSpecificCity = standardLocation && standardLocation !== 'France' && standardLocation !== 'Europe' && standardLocation !== 'all';
   const indeedWord = isSpecificCity ? `${searchTerm} ${standardLocation}` : (isDrom ? `${searchTerm} ${standardLocation}` : searchTerm);
 
+  // Configuration ciblée pour le scraper LinkedIn
+  const qLower = (query || '').toLowerCase();
+  let linkedInJobType = null;
+  if (/\bcdi\b|temps plein/i.test(qLower)) linkedInJobType = 'F';
+  else if (/\bfreelance\b|\bcontractuel\b|\bindependant\b/i.test(qLower)) linkedInJobType = 'C';
+  else if (/\bstage\b|\balternance\b/i.test(qLower)) linkedInJobType = 'I';
+
+  let linkedInTimeFilter = null;
+  if (/24h|1 jour|derni[eè]res heures/i.test(qLower)) linkedInTimeFilter = 'r86400';
+  else if (/semaine|7 jours/i.test(qLower)) linkedInTimeFilter = 'r604800';
+
+  let linkedInWorkplaceType = null;
+  if (/t[eé]l[eé]travail|remote|full remote/i.test(qLower)) linkedInWorkplaceType = '2';
+  else if (/hybride/i.test(qLower)) linkedInWorkplaceType = '3';
+
+  const linkedInConfig = {
+    keywords: searchTerm,
+    location: isDrom ? standardLocation.replace('La ', '') : standardLocation,
+    limit: 25,
+    f_JT: linkedInJobType,
+    f_TPR: linkedInTimeFilter,
+    f_WT: linkedInWorkplaceType
+  };
+
   // Lancement concurrent de TOUS les scrapers
   const scrapersToRun = [
     // 1. France Travail (Renforcé avec retry mots-clés)
     scrapeFranceTravail(searchTerm, ftCode, 25),
 
-    // 2. LinkedIn (France, DROM ou Europe)
-    scrapeLinkedIn(searchTerm, isDrom ? standardLocation.replace('La ', '') : standardLocation, 25),
+    // 2. LinkedIn (France, DROM ou Europe - Module générique)
+    scrapeLinkedIn(linkedInConfig),
 
     // 3. HelloWork (France & DROM)
     scrapeHellowork(searchTerm, standardLocation, 25),
@@ -615,6 +593,7 @@ module.exports = {
   scrapeJobs,
   scrapeFranceTravail,
   scrapeLinkedIn,
+  scrapeLinkedInJobs,
   scrapeHellowork,
   scrapeMeteojob,
   scrapeJooble,
