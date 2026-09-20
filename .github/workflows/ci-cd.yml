@@ -15,8 +15,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
-  security-events: write
 
 env:
   REGISTRY: ghcr.io
@@ -28,6 +26,8 @@ jobs:
   npm-audit:
     name: NPM Audit
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -50,15 +50,50 @@ jobs:
         run: npm audit --audit-level=high
 
   # ========================================================
-  # 2. Build Docker, Scan de sécurité Trivy & Push vers GHCR
+  # 2. Release Please (SemVer, CHANGELOG & Git Tag)
+  # ========================================================
+  release:
+    name: Semantic Release & Changelog
+    needs: npm-audit
+    if: github.event_name == 'push' && (github.ref_name == 'master' || github.ref_name == 'main')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
+      major: ${{ steps.release.outputs.major }}
+      minor: ${{ steps.release.outputs.minor }}
+      patch: ${{ steps.release.outputs.patch }}
+    steps:
+      - name: Run Release Please
+        id: release
+        uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  # ========================================================
+  # 3. Build Docker, Scan de sécurité Trivy & Push vers GHCR
   # ========================================================
   docker-build-scan-push:
     name: Docker Build, Trivy Scan & Push GHCR
-    needs: npm-audit
+    needs: [npm-audit, release]
+    if: always() && needs.npm-audit.result == 'success' && (needs.release.result == 'success' || needs.release.result == 'skipped')
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.release_created == 'true' && needs.release.outputs.tag_name || github.ref }}
+          fetch-depth: 0
 
       # GHCR requiert impérativement un nom d'image en minuscules
       - name: Set lowercase repository name for GHCR
@@ -82,10 +117,17 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest,enable=${{ github.ref_name == 'master' || github.ref_name == 'main' }}
+            type=raw,value=latest,enable=${{ github.ref_name == 'master' || github.ref_name == 'main' || needs.release.outputs.release_created == 'true' }}
             type=ref,event=branch
             type=ref,event=pr
-            type=semver,pattern={{version}}
+            type=semver,pattern={{version}},value=${{ needs.release.outputs.tag_name }},enable=${{ needs.release.outputs.release_created == 'true' }}
+            type=semver,pattern=v{{version}},value=${{ needs.release.outputs.tag_name }},enable=${{ needs.release.outputs.release_created == 'true' }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.release.outputs.tag_name }},enable=${{ needs.release.outputs.release_created == 'true' }}
+            type=semver,pattern={{major}},value=${{ needs.release.outputs.tag_name }},enable=${{ needs.release.outputs.release_created == 'true' }}
+            type=semver,pattern={{version}},enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=semver,pattern=v{{version}},enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=semver,pattern={{major}},enable=${{ startsWith(github.ref, 'refs/tags/v') }}
             type=sha,format=short
 
       # Build de l'image en local pour permettre le scan Trivy avant publication
