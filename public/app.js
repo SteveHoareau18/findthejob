@@ -1916,15 +1916,6 @@ Pas de PHP ni de WordPress`;
           handleJobApplyClick(job);
         });
       }
-      if (disBtn) {
-        disBtn.addEventListener('click', (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          const currentStatus = jobInteractions[job.id] || null;
-          const newStatus = (currentStatus === 'dismissed') ? null : 'dismissed';
-          setJobUserStatus(job.id, newStatus);
-        });
-      }
 
       const summaryBtn = card.querySelector('.btn-ai-summary');
       if (summaryBtn) {
@@ -2022,9 +2013,11 @@ Pas de PHP ni de WordPress`;
   const modalCloseBtn = document.getElementById('modalCloseBtn');
   const modalLoading = document.getElementById('modalLoading');
   const modalContent = document.getElementById('modalContent');
+  let currentAnalysisJob = null;
 
   function closeModal() {
     jobModal.classList.add('hidden');
+    currentAnalysisJob = null;
     document.body.style.overflow = '';
     // Restitution du focus au bouton déclencheur (RGAA)
     if (lastFocusedElement) {
@@ -2038,6 +2031,10 @@ Pas de PHP ni de WordPress`;
   });
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
+      // Si le pop-up de confirmation d'action est ouvert, ne pas fermer jobModal en arrière-plan
+      if (applyConfirmModal && !applyConfirmModal.classList.contains('hidden')) {
+        return;
+      }
       if (!jobModal.classList.contains('hidden')) {
         closeModal();
       }
@@ -2048,6 +2045,7 @@ Pas de PHP ni de WordPress`;
   });
 
   async function openJobAnalysisModal(job) {
+    currentAnalysisJob = job;
     document.body.style.overflow = 'hidden';
     jobModal.classList.remove('hidden');
     modalLoading.classList.remove('hidden');
@@ -2072,12 +2070,57 @@ Pas de PHP ni de WordPress`;
     } catch (err) {
       modalLoading.classList.add('hidden');
       modalContent.innerHTML = `
-        <div class="text-center py-8 space-y-2">
+        <div class="text-center py-8 space-y-4">
           <div class="text-3xl" aria-hidden="true">⚠️</div>
           <h3 class="text-lg font-bold text-rose-700">Impossible d'analyser cette offre</h3>
           <p class="text-sm text-slate-600">${escapeHtml(err.message)}</p>
+          <div id="modalApplyActionWrapper" class="pt-3 flex justify-center"></div>
         </div>
       `;
+      updateModalApplyState(job);
+    }
+  }
+
+  function updateModalApplyState(job) {
+    if (!job) return;
+    const modalApplyWrapper = document.getElementById('modalApplyActionWrapper');
+    if (!modalApplyWrapper) return;
+    const isApplied = Boolean(candidatures[job.id]);
+    modalApplyWrapper.innerHTML = `
+      <button
+        type="button"
+        id="modalApplyBtn"
+        class="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 min-h-[44px] px-6 py-2.5 rounded-xl font-bold text-xs sm:text-sm shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 ${isApplied ? 'bg-emerald-50 text-emerald-800 border border-emerald-300 hover:bg-emerald-100 focus:ring-emerald-500' : 'bg-indigo-600 hover:bg-indigo-700 text-white focus:ring-indigo-500'}"
+        data-job-id="${escapeHtml(job.id)}"
+        aria-label="${isApplied ? 'Gérer cette candidature' : 'Postuler à l\'offre ' + escapeHtml(job.title)}"
+      >
+        <span>${isApplied ? '✓ Postulée (Gérer le suivi)' : `Postuler sur ${escapeHtml(job.source || "l'offre")} ↗`}</span>
+      </button>
+      ${isApplied ? `
+        <a
+          href="${job.url}"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="inline-flex items-center justify-center w-11 h-11 rounded-xl text-xs font-bold text-slate-500 hover:text-slate-900 hover:bg-slate-100 border border-slate-200 transition-all shrink-0"
+          title="Ouvrir le lien de l'offre dans un nouvel onglet"
+        >
+          ↗
+        </a>
+      ` : ''}
+    `;
+
+    const btn = document.getElementById('modalApplyBtn');
+    if (btn) {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        lastFocusedElement = btn;
+        if (Boolean(candidatures[job.id])) {
+          closeModal();
+          openCandidaturesModal(job.id);
+        } else {
+          openApplyConfirmModal(job);
+        }
+      });
     }
   }
 
@@ -2206,18 +2249,13 @@ Pas de PHP ni de WordPress`;
           <span class="text-xs text-slate-500">
             Analyse effectuée par Groq AI • Llama 3
           </span>
-          <a
-            href="${job.url}"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="w-full sm:w-auto inline-flex items-center justify-center min-h-[44px] px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-          >
-            Postuler directement sur ${escapeHtml(job.source)} ↗
-          </a>
+          <div id="modalApplyActionWrapper" class="flex items-center gap-2 w-full sm:w-auto justify-end"></div>
         </div>
 
       </div>
     `;
+
+    updateModalApplyState(job);
 
     const copyPitchBtn = document.getElementById('copyPitchBtn');
     if (copyPitchBtn) {
@@ -2296,6 +2334,10 @@ Pas de PHP ni de WordPress`;
     if (candCountInterview) candCountInterview.textContent = interviews;
     if (candCountAccepted) candCountAccepted.textContent = accepted;
     if (candCountRejected) candCountRejected.textContent = rejected;
+
+    if (currentAnalysisJob && jobModal && !jobModal.classList.contains('hidden')) {
+      updateModalApplyState(currentAnalysisJob);
+    }
   }
 
   function openApplyConfirmModal(job) {
@@ -2311,6 +2353,7 @@ Pas de PHP ni de WordPress`;
     const today = new Date().toISOString().split('T')[0];
     if (applyConfirmDateInput) applyConfirmDateInput.value = today;
 
+    document.body.style.overflow = 'hidden';
     applyConfirmModal.classList.remove('hidden');
     if (applyAndRedirectBtn) applyAndRedirectBtn.focus();
   }
@@ -2319,6 +2362,12 @@ Pas de PHP ni de WordPress`;
     if (!applyConfirmModal) return;
     applyConfirmModal.classList.add('hidden');
     pendingApplyJob = null;
+    if (
+      (!jobModal || jobModal.classList.contains('hidden')) &&
+      (!candidaturesModal || candidaturesModal.classList.contains('hidden'))
+    ) {
+      document.body.style.overflow = '';
+    }
     if (lastFocusedElement && typeof lastFocusedElement.focus === 'function') {
       lastFocusedElement.focus();
     }
@@ -2342,6 +2391,10 @@ Pas de PHP ni de WordPress`;
   function openCandidaturesModal(focusJobId = null) {
     if (!candidaturesModal) return;
     lastFocusedElement = document.activeElement;
+    if (jobModal && !jobModal.classList.contains('hidden')) {
+      jobModal.classList.add('hidden');
+    }
+    document.body.style.overflow = 'hidden';
     candidaturesModal.classList.remove('hidden');
 
     updateCandidaturesBadgeUI();
@@ -2366,6 +2419,7 @@ Pas de PHP ni de WordPress`;
   function closeCandidaturesModal() {
     if (!candidaturesModal) return;
     candidaturesModal.classList.add('hidden');
+    document.body.style.overflow = '';
     if (lastFocusedElement) lastFocusedElement.focus();
   }
 
