@@ -19,6 +19,14 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Assure la disponibilité des icônes PWA (192x192, 512x512, maskable)
+const { ensurePwaIcons } = require('./src/services/pwaIconService');
+try {
+  ensurePwaIcons();
+} catch (pwaErr) {
+  console.warn('[PWA] Initialisation des icônes:', pwaErr.message);
+}
+
 /**
  * Route GET /api/status
  * Vérifie l'état du serveur et la présence de la clé Groq
@@ -210,6 +218,123 @@ app.post('/api/cv/score-jobs', async (req, res) => {
       error: error.message || 'Erreur lors de l\'évaluation des offres par Groq.'
     });
   }
+});
+
+/**
+ * =================== ROUTES PWA & HORS-LIGNE ===================
+ */
+
+// Stockage mémoire des alertes & souscriptions push
+const serverAlerts = new Map();
+const pushSubscriptions = new Set();
+
+/**
+ * Route POST /api/sync/outbox
+ * Reçoit et traite les actions posées hors-ligne (UI optimiste)
+ */
+app.post('/api/sync/outbox', (req, res) => {
+  const item = req.body;
+  if (!item || !item.actionType) {
+    return res.status(400).json({ success: false, error: 'Données de synchronisation invalides' });
+  }
+
+  console.log(`[PWA Outbox Sync] Action reçue : ${item.actionType} (ID local: ${item.localId || 'N/A'})`);
+
+  switch (item.actionType) {
+    case 'SAVE_INTERACTION':
+      console.log(`  -> Offre ${item.payload?.jobId} marquée comme ${item.payload?.status}`);
+      break;
+
+    case 'SAVE_CANDIDATURE':
+      console.log(`  -> Candidature synchronisée : ${item.payload?.company} - ${item.payload?.jobTitle}`);
+      break;
+
+    case 'DELETE_CANDIDATURE':
+      console.log(`  -> Suppression candidature : ${item.payload?.jobId}`);
+      break;
+
+    case 'SAVE_ALERT':
+      if (item.payload?.id) {
+        serverAlerts.set(item.payload.id, item.payload);
+      }
+      break;
+
+    default:
+      console.log(`  -> Action générique traitée avec succès`);
+  }
+
+  res.json({
+    success: true,
+    syncedAt: Date.now(),
+    localId: item.localId
+  });
+});
+
+/**
+ * Route GET /api/alerts
+ * Retourne la liste des alertes de recherche
+ */
+app.get('/api/alerts', (req, res) => {
+  res.json({
+    success: true,
+    alerts: Array.from(serverAlerts.values())
+  });
+});
+
+/**
+ * Route POST /api/alerts
+ * Sauvegarde ou met à jour une alerte de recherche
+ */
+app.post('/api/alerts', (req, res) => {
+  const alert = req.body;
+  if (!alert || !alert.id) {
+    return res.status(400).json({ success: false, error: 'Alerte invalide' });
+  }
+
+  serverAlerts.set(alert.id, {
+    ...alert,
+    updatedAt: Date.now()
+  });
+
+  res.json({ success: true, alert });
+});
+
+/**
+ * Route DELETE /api/alerts/:id
+ * Supprime une alerte de recherche
+ */
+app.delete('/api/alerts/:id', (req, res) => {
+  const id = req.params.id;
+  const deleted = serverAlerts.delete(id);
+  res.json({ success: true, deleted });
+});
+
+/**
+ * Route GET /api/push/status
+ * Vérifie l'état de prise en charge des notifications Push
+ */
+app.get('/api/push/status', (req, res) => {
+  res.json({
+    enabled: true,
+    hasVapid: Boolean(process.env.VAPID_PUBLIC_KEY),
+    subscribersCount: pushSubscriptions.size
+  });
+});
+
+/**
+ * Route POST /api/push/subscribe
+ * Enregistre une souscription Web Push client
+ */
+app.post('/api/push/subscribe', (req, res) => {
+  const subscription = req.body;
+  if (!subscription || !subscription.endpoint) {
+    return res.status(400).json({ success: false, error: 'Souscription push invalide' });
+  }
+
+  pushSubscriptions.add(JSON.stringify(subscription));
+  console.log(`[PWA Push] Nouveau client abonné aux notifications (${pushSubscriptions.size} abonnés)`);
+
+  res.json({ success: true, registered: true });
 });
 
 // Démarrage du serveur HTTP & WebSocket (2026)

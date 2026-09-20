@@ -7,8 +7,8 @@
 
 (function () {
   const DB_NAME = 'FindTheJobDB';
-  const DB_VERSION = 1;
-  const STORES = ['jobs', 'searchData', 'cvData'];
+  const DB_VERSION = 2;
+  const STORES = ['jobs', 'searchData', 'cvData', 'alerts', 'outbox'];
 
   // =================== COOKIES HELPERS ===================
   function setCookie(name, value, days = 7) {
@@ -44,7 +44,11 @@
         const db = e.target.result;
         STORES.forEach((store) => {
           if (!db.objectStoreNames.contains(store)) {
-            db.createObjectStore(store, { keyPath: 'id' });
+            if (store === 'outbox') {
+              db.createObjectStore(store, { keyPath: 'localId', autoIncrement: true });
+            } else {
+              db.createObjectStore(store, { keyPath: 'id' });
+            }
           }
         });
       };
@@ -74,6 +78,34 @@
         const store = tx.objectStore(storeName);
         const req = store.get(key);
         req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  function getAllFromStore(db, storeName) {
+    return new Promise((resolve, reject) => {
+      try {
+        const tx = db.transaction(storeName, 'readonly');
+        const store = tx.objectStore(storeName);
+        const req = store.getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => reject(req.error);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  function deleteFromStore(db, storeName, key) {
+    return new Promise((resolve, reject) => {
+      try {
+        const tx = db.transaction(storeName, 'readwrite');
+        const store = tx.objectStore(storeName);
+        const req = store.delete(key);
+        req.onsuccess = () => resolve();
         req.onerror = () => reject(req.error);
       } catch (err) {
         reject(err);
@@ -266,6 +298,12 @@
           delete interactions[jobId];
         }
         localStorage.setItem('ftj_job_interactions', JSON.stringify(interactions));
+
+        // File d'attente hors-ligne si déconnecté
+        if (typeof navigator !== 'undefined' && !navigator.onLine) {
+          this.queueOutboxAction('SAVE_INTERACTION', { jobId, status });
+        }
+
         return interactions;
       } catch (e) {
         console.warn('[StorageManager] Erreur saveJobInteraction:', e);
@@ -328,6 +366,12 @@
         }
 
         localStorage.setItem('ftj_candidatures', JSON.stringify(candidatures));
+
+        // File d'attente hors-ligne si déconnecté
+        if (typeof navigator !== 'undefined' && !navigator.onLine) {
+          this.queueOutboxAction('SAVE_CANDIDATURE', candidatures[key]);
+        }
+
         return candidatures;
       } catch (e) {
         console.warn('[StorageManager] Erreur saveCandidature:', e);
@@ -346,6 +390,12 @@
         const candidatures = this.getCandidatures();
         delete candidatures[jobId];
         localStorage.setItem('ftj_candidatures', JSON.stringify(candidatures));
+
+        // File d'attente hors-ligne si déconnecté
+        if (typeof navigator !== 'undefined' && !navigator.onLine) {
+          this.queueOutboxAction('DELETE_CANDIDATURE', { jobId });
+        }
+
         return candidatures;
       } catch (e) {
         console.warn('[StorageManager] Erreur deleteCandidature:', e);
@@ -496,11 +546,162 @@
         await clearStore(db, 'jobs');
         await clearStore(db, 'searchData');
         await clearStore(db, 'cvData');
+        await clearStore(db, 'alerts');
+        await clearStore(db, 'outbox');
       } catch (e) {
         console.warn('[StorageManager] Erreur purge IndexedDB:', e);
       }
 
       return { success: true };
+    },
+
+    // =================== GESTION DES ALERTES EMPLOI ===================
+    async saveAlert(alertData) {
+      if (!alertData) return null;
+      try {
+        const db = await openDb();
+        const alertItem = {
+          id: alertData.id || 'alert_' + Date.now(),
+          title: alertData.title || alertData.query || 'Recherche sauvegardée',
+          query: alertData.query || '',
+          exclusions: alertData.exclusions || '',
+          geoRegion: alertData.geoRegion || 'all',
+          active: alertData.active !== false,
+          createdAt: alertData.createdAt || Date.now(),
+          lastCheckedAt: alertData.lastCheckedAt || Date.now(),
+          matchCount: alertData.matchCount || 0
+        };
+        await saveToStore(db, 'alerts', alertItem);
+        return alertItem;
+      } catch (err) {
+        console.warn('[StorageManager] Erreur saveAlert:', err);
+        return null;
+      }
+    },
+
+    async getAlerts() {
+      try {
+        const db = await openDb();
+        return await getAllFromStore(db, 'alerts');
+      } catch (err) {
+        console.warn('[StorageManager] Erreur getAlerts:', err);
+        return [];
+      }
+    },
+
+    async deleteAlert(alertId) {
+      if (!alertId) return false;
+      try {
+        const db = await openDb();
+        await deleteFromStore(db, 'alerts', alertId);
+        return true;
+      } catch (err) {
+        console.warn('[StorageManager] Erreur deleteAlert:', err);
+        return false;
+      }
+    },
+
+    // =================== OUTBOX & SYNCHRONISATION HORS-LIGNE ===================
+    async queueOutboxAction(actionType, payload) {
+      try {
+        const db = await openDb();
+        const item = {
+          actionType, // 'SAVE_INTERACTION' | 'SAVE_CANDIDATURE' | 'DELETE_CANDIDATURE' | 'SAVE_ALERT'
+          payload,
+          createdAt: Date.now(),
+          status: 'pending'
+        };
+        const localId = await saveToStore(db, 'outbox', item);
+        const outboxCount = (await this.getOutboxItems()).length;
+        window.dispatchEvent(new CustomEvent('ftj:outbox-updated', { detail: { count: outboxCount } }));
+        return localId;
+      } catch (err) {
+        console.warn('[StorageManager] Erreur queueOutboxAction:', err);
+        return null;
+      }
+    },
+
+    async getOutboxItems() {
+      try {
+        const db = await openDb();
+        return await getAllFromStore(db, 'outbox');
+      } catch (err) {
+        console.warn('[StorageManager] Erreur getOutboxItems:', err);
+        return [];
+      }
+    },
+
+    async removeOutboxItem(localId) {
+      try {
+        const db = await openDb();
+        await deleteFromStore(db, 'outbox', localId);
+        const outboxCount = (await this.getOutboxItems()).length;
+        window.dispatchEvent(new CustomEvent('ftj:outbox-updated', { detail: { count: outboxCount } }));
+        return true;
+      } catch (err) {
+        console.warn('[StorageManager] Erreur removeOutboxItem:', err);
+        return false;
+      }
+    },
+
+    async clearOutbox() {
+      try {
+        const db = await openDb();
+        await clearStore(db, 'outbox');
+        window.dispatchEvent(new CustomEvent('ftj:outbox-updated', { detail: { count: 0 } }));
+        return true;
+      } catch (err) {
+        console.warn('[StorageManager] Erreur clearOutbox:', err);
+        return false;
+      }
+    },
+
+    /**
+     * Traite et synchronise la file d'attente Outbox vers le serveur
+     */
+    async processOutboxQueue(syncEndpoint = '/api/sync/outbox') {
+      if (!navigator.onLine) {
+        return { synced: 0, total: 0, offline: true };
+      }
+
+      const items = await this.getOutboxItems();
+      if (!items || items.length === 0) {
+        return { synced: 0, total: 0, success: true };
+      }
+
+      let syncedCount = 0;
+      for (const item of items) {
+        try {
+          const response = await fetch(syncEndpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(item)
+          });
+
+          if (response.ok) {
+            await this.removeOutboxItem(item.localId);
+            syncedCount++;
+          } else {
+            console.warn('[Outbox] Erreur serveur sur item:', item.localId, response.status);
+            break;
+          }
+        } catch (netErr) {
+          console.warn('[Outbox] Réseau inaccessible pendant la synchro:', netErr.message);
+          break;
+        }
+      }
+
+      const remaining = (await this.getOutboxItems()).length;
+      window.dispatchEvent(new CustomEvent('ftj:outbox-synced', {
+        detail: { synced: syncedCount, remaining }
+      }));
+
+      return {
+        total: items.length,
+        synced: syncedCount,
+        remaining,
+        success: syncedCount > 0
+      };
     },
 
     formatRemainingTime,

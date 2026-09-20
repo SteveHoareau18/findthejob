@@ -4,7 +4,14 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>FindTheJob - Recherche d'emploi intelligente & Scraping propulsé par Groq AI</title>
-  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <meta name="theme-color" content="#4f46e5" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="FindTheJob" />
+  <link rel="apple-touch-icon" href="icons/icon.svg" />
   
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -58,7 +65,7 @@
     <!-- En-tête Accessible -->
     <header role="banner" class="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 pb-6 border-b border-slate-200">
       <div class="flex items-center gap-3">
-        <img src="favicon.svg" alt="FindTheJob Logo" class="w-12 h-12 rounded-xl shadow-sm flex-shrink-0" width="48" height="48" />
+        <img src="icons/icon.svg" alt="FindTheJob Logo" class="w-12 h-12 rounded-xl shadow-sm flex-shrink-0" width="48" height="48" />
         <div>
           <div class="flex items-center gap-2 flex-wrap">
             <h1 class="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">
@@ -112,6 +119,17 @@
           <span>Enregistrer (+7j)</span>
         </button>
 
+        <!-- Bouton Installer PWA -->
+        <button
+          type="button"
+          id="pwaInstallBtn"
+          class="hidden inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white font-bold text-xs shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-indigo-500 min-h-[38px]"
+          title="Installer FindTheJob sur votre appareil pour un accès rapide et hors-ligne"
+        >
+          <span aria-hidden="true">📲</span>
+          <span>Installer</span>
+        </button>
+
         <!-- Bouton Vider le cache -->
         <button
           type="button"
@@ -125,6 +143,31 @@
         </button>
       </div>
     </header>
+
+    <!-- Bandeau Statut PWA & Synchronisation Hors-ligne -->
+    <div
+      id="pwaStatusBanner"
+      class="hidden transition-all duration-300 p-3 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shadow-sm bg-slate-50 border-slate-200"
+      role="status"
+      aria-live="polite"
+    >
+      <div class="flex items-center gap-2.5 flex-wrap">
+        <span id="pwaStatusDot" class="w-2.5 h-2.5 rounded-full bg-emerald-500" aria-hidden="true"></span>
+        <span id="pwaStatusText" class="font-bold text-slate-800">Mode Connecté</span>
+        <span id="pwaOutboxBadge" class="hidden font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300">
+          0 action en attente
+        </span>
+      </div>
+      <div class="flex items-center gap-2">
+        <button
+          id="pwaSyncBtn"
+          type="button"
+          class="hidden items-center gap-1 px-3 py-1 font-bold rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm transition-colors text-xs"
+        >
+          <span>🔄 Synchroniser</span>
+        </button>
+      </div>
+    </div>
 
     <!-- Contenu Principal -->
     <main id="main-content" role="main" class="space-y-8">

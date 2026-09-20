@@ -3982,6 +3982,191 @@ Pas de PHP ni de WordPress`;
     });
   }
 
+  // =================== GESTION PROGRESSIVE WEB APP (PWA) & MODE HORS-LIGNE ===================
+  const pwaInstallBtn = document.getElementById('pwaInstallBtn');
+  const pwaStatusBanner = document.getElementById('pwaStatusBanner');
+  const pwaStatusDot = document.getElementById('pwaStatusDot');
+  const pwaStatusText = document.getElementById('pwaStatusText');
+  const pwaOutboxBadge = document.getElementById('pwaOutboxBadge');
+  const pwaSyncBtn = document.getElementById('pwaSyncBtn');
+
+  let deferredInstallPrompt = null;
+
+  // 1. Enregistrement du Service Worker
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js')
+        .then((registration) => {
+          console.log('[PWA] Service Worker actif (scope):', registration.scope);
+
+          registration.addEventListener('updatefound', () => {
+            const installingWorker = registration.installing;
+            if (installingWorker) {
+              installingWorker.addEventListener('statechange', () => {
+                if (installingWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                  showToastNotification('🚀 Une nouvelle version de FindTheJob est prête. Rechargez pour mettre à jour.');
+                }
+              });
+            }
+          });
+        })
+        .catch((err) => {
+          console.warn('[PWA] Échec enregistrement Service Worker:', err);
+        });
+
+      navigator.serviceWorker.addEventListener('message', (event) => {
+        if (event.data && event.data.type === 'FTJ_SYNC_OUTBOX') {
+          console.log('[PWA] Message Background Sync reçu');
+          triggerOutboxSync();
+        }
+      });
+    });
+  }
+
+  // 2. Gestion de l'installation PWA (Prompt beforeinstallprompt)
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredInstallPrompt = e;
+    if (pwaInstallBtn) {
+      pwaInstallBtn.classList.remove('hidden');
+    }
+  });
+
+  if (pwaInstallBtn) {
+    pwaInstallBtn.addEventListener('click', async () => {
+      if (!deferredInstallPrompt) return;
+      pwaInstallBtn.disabled = true;
+      deferredInstallPrompt.prompt();
+      const choiceResult = await deferredInstallPrompt.userChoice;
+      console.log(`[PWA] Résultat invitation: ${choiceResult.outcome}`);
+      deferredInstallPrompt = null;
+      pwaInstallBtn.classList.add('hidden');
+      pwaInstallBtn.disabled = false;
+    });
+  }
+
+  window.addEventListener('appinstalled', () => {
+    deferredInstallPrompt = null;
+    if (pwaInstallBtn) pwaInstallBtn.classList.add('hidden');
+    showToastNotification('🎉 FindTheJob est désormais installé sur votre appareil !');
+  });
+
+  // 3. Gestion de l'état réseau (Online / Offline)
+  function updateNetworkStatusUI() {
+    const isOnline = navigator.onLine;
+    if (!pwaStatusBanner) return;
+
+    if (!isOnline) {
+      pwaStatusBanner.classList.remove('hidden', 'bg-slate-50', 'border-slate-200');
+      pwaStatusBanner.classList.add('bg-amber-50', 'border-amber-300');
+      if (pwaStatusDot) {
+        pwaStatusDot.className = 'w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse';
+      }
+      if (pwaStatusText) {
+        pwaStatusText.className = 'font-bold text-amber-900';
+        pwaStatusText.textContent = 'Mode Hors-ligne — Données locales accessibles';
+      }
+    } else {
+      pwaStatusBanner.classList.remove('bg-amber-50', 'border-amber-300');
+      pwaStatusBanner.classList.add('bg-slate-50', 'border-slate-200');
+      if (pwaStatusDot) {
+        pwaStatusDot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-500';
+      }
+      if (pwaStatusText) {
+        pwaStatusText.className = 'font-bold text-slate-800';
+        pwaStatusText.textContent = 'En ligne — Synchronisé';
+      }
+    }
+
+    refreshOutboxBadge();
+  }
+
+  // 4. Badge d'actions en attente
+  async function refreshOutboxBadge() {
+    if (!window.storageManager || !window.storageManager.getOutboxItems) return;
+    try {
+      const items = await window.storageManager.getOutboxItems();
+      const count = items ? items.length : 0;
+
+      if (!pwaOutboxBadge || !pwaSyncBtn || !pwaStatusBanner) return;
+
+      if (count > 0) {
+        pwaStatusBanner.classList.remove('hidden');
+        pwaOutboxBadge.classList.remove('hidden');
+        pwaOutboxBadge.textContent = `${count} action${count > 1 ? 's' : ''} en attente`;
+        if (navigator.onLine) {
+          pwaSyncBtn.classList.remove('hidden');
+          pwaSyncBtn.classList.add('inline-flex');
+        } else {
+          pwaSyncBtn.classList.add('hidden');
+          pwaSyncBtn.classList.remove('inline-flex');
+        }
+      } else {
+        pwaOutboxBadge.classList.add('hidden');
+        pwaSyncBtn.classList.add('hidden');
+        pwaSyncBtn.classList.remove('inline-flex');
+        if (navigator.onLine) {
+          pwaStatusBanner.classList.add('hidden');
+        }
+      }
+    } catch (e) {
+      console.warn('[PWA] Erreur refreshOutboxBadge:', e);
+    }
+  }
+
+  // 5. Exécution de la synchronisation de l'Outbox
+  async function triggerOutboxSync() {
+    if (!navigator.onLine || !window.storageManager || !window.storageManager.processOutboxQueue) return;
+
+    if (pwaSyncBtn) {
+      pwaSyncBtn.disabled = true;
+      pwaSyncBtn.innerHTML = '<span>⏳ Envoi...</span>';
+    }
+
+    try {
+      const res = await window.storageManager.processOutboxQueue();
+      if (res && res.synced > 0) {
+        showToastNotification(`🔄 ${res.synced} action${res.synced > 1 ? 's' : ''} synchronisée${res.synced > 1 ? 's' : ''} avec succès !`);
+      }
+    } catch (err) {
+      console.warn('[PWA] Erreur synchronisation:', err);
+    } finally {
+      if (pwaSyncBtn) {
+        pwaSyncBtn.disabled = false;
+        pwaSyncBtn.innerHTML = '<span>🔄 Synchroniser</span>';
+      }
+      refreshOutboxBadge();
+    }
+  }
+
+  window.addEventListener('online', () => {
+    updateNetworkStatusUI();
+    showToastNotification('🌐 Connexion rétablie !');
+    triggerOutboxSync();
+  });
+
+  window.addEventListener('offline', () => {
+    updateNetworkStatusUI();
+    showToastNotification('⚠️ Mode hors-ligne actif. Vos actions locales sont conservées.');
+  });
+
+  window.addEventListener('ftj:outbox-updated', () => {
+    refreshOutboxBadge();
+  });
+
+  window.addEventListener('ftj:outbox-synced', () => {
+    refreshOutboxBadge();
+  });
+
+  if (pwaSyncBtn) {
+    pwaSyncBtn.addEventListener('click', () => {
+      triggerOutboxSync();
+    });
+  }
+
+  updateNetworkStatusUI();
+  refreshOutboxBadge();
+
   function escapeHtml(str) {
     if (!str) return '';
     const div = document.createElement('div');
