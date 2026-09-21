@@ -6,6 +6,13 @@ Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/)
 
 ---
 
+## [1.2.0](https://github.com/SteveHoareau18/findthejob/compare/findthejob-v1.1.0...findthejob-v1.2.0) (2026-09-21)
+
+
+### Features
+
+* **data:** ajout des boutons importer et exporter dans l'en-tête (ZIP/JSON) ([8a80633](https://github.com/SteveHoareau18/findthejob/commit/8a80633245d6682095b1e2c08daafafdcfcbedd0))
+
 ## [1.1.0](https://github.com/SteveHoareau18/findthejob/compare/findthejob-v1.0.0...findthejob-v1.1.0) (2026-09-20)
 
 
