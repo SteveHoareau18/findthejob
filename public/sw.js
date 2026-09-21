@@ -3,7 +3,7 @@
  * Gestion du cache App Shell, CDN tiers, API Network-First, Outbox Sync et Push Notifications
  */
 
-const SHELL_CACHE = 'ftj-shell-v2';
+const SHELL_CACHE = 'ftj-shell-v3';
 const CDN_CACHE = 'ftj-cdn-v1';
 const API_CACHE = 'ftj-api-v1';
 

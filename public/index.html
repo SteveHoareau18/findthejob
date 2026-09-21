@@ -122,6 +122,33 @@
           <span>Enregistrer (+7j)</span>
         </button>
 
+        <!-- Input file caché pour l'importation de données -->
+        <input type="file" id="importHeaderFileInput" accept=".zip,.json" class="sr-only" aria-label="Sélectionner un fichier de sauvegarde (.zip ou .json)" />
+
+        <!-- Bouton Importer les données -->
+        <button
+          type="button"
+          id="importHeaderBtn"
+          class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-slate-400 min-h-[38px]"
+          title="Importer une sauvegarde complète de données (.zip ou .json)"
+          aria-label="Importer des données FindTheJob"
+        >
+          <span aria-hidden="true">📥</span>
+          <span>Importer</span>
+        </button>
+
+        <!-- Bouton Exporter les données -->
+        <button
+          type="button"
+          id="exportHeaderBtn"
+          class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-emerald-600 bg-emerald-50 hover:bg-emerald-600 hover:text-white text-emerald-800 font-bold text-xs shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-emerald-500 min-h-[38px]"
+          title="Exporter toutes vos données locales (candidatures, profil CV, recherches) dans une archive ZIP ou JSON"
+          aria-label="Exporter les données de FindTheJob"
+        >
+          <span aria-hidden="true">📦</span>
+          <span>Exporter</span>
+        </button>
+
         <!-- Bouton Installer PWA -->
         <button
           type="button"

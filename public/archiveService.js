@@ -173,7 +173,7 @@
    */
   async function exportZipArchive(candidatures = {}, metadata = {}) {
     const today = new Date().toISOString().split('T')[0];
-    const filename = `findthejob_export_${today}.zip`;
+    const filename = `findthejob_candidatures_${today}.zip`;
 
     const cList = Array.isArray(candidatures) ? candidatures : Object.values(candidatures);
     const candidaturesMap = Array.isArray(candidatures)
@@ -246,16 +246,152 @@
     return { success: true, format: 'dual', filename: `entretiens_${today}.ics`, candidaturesCount: cList.length };
   }
 
+  /**
+   * Exporte l'ensemble complet des données applicatives FindTheJob :
+   * - candidatures et entretiens planifiés (candidatures_donnees.json)
+   * - calendrier iCalendar RFC 5545 (entretiens.ics)
+   * - état applicatif, critères de recherche, profil CV et favoris (app_state.json)
+   * - notice explicative (README.txt)
+   */
+  async function exportFullDataArchive({ candidatures = {}, appState = null, metadata = {} } = {}) {
+    const today = new Date().toISOString().split('T')[0];
+    const filename = `findthejob_sauvegarde_${today}.zip`;
+
+    const cList = Array.isArray(candidatures) ? candidatures : Object.values(candidatures);
+    const candidaturesMap = Array.isArray(candidatures)
+      ? candidatures.reduce((acc, c) => { if (c?.id) acc[c.id] = c; return acc; }, {})
+      : candidatures;
+
+    // 1. Contenu candidatures
+    const candidaturesPackage = {
+      version: '2.0',
+      appName: 'FindTheJob',
+      exportedAt: new Date().toISOString(),
+      metadata: {
+        totalCandidatures: cList.length,
+        totalInterviews: cList.reduce((acc, c) => acc + ((c.interviews && c.interviews.length) || 0), 0),
+        ...metadata
+      },
+      candidatures: candidaturesMap
+    };
+    const candidaturesJson = JSON.stringify(candidaturesPackage, null, 2);
+
+    // 2. Contenu état applicatif
+    const statePackage = {
+      version: '2.0',
+      appName: 'FindTheJob',
+      exportedAt: new Date().toISOString(),
+      appState: appState || {}
+    };
+    const stateJson = JSON.stringify(statePackage, null, 2);
+
+    // 3. Fichier iCalendar
+    const icsContent = generateIcs(candidaturesMap);
+
+    // 4. Notice d'information
+    const readmeContent = [
+      '====================================================',
+      '       FINDTHEJOB - SAUVEGARDE COMPLÈTE DES DONNÉES ',
+      '====================================================',
+      `Date de l'export : ${new Date().toLocaleString('fr-FR')}`,
+      `Nombre de candidatures : ${cList.length}`,
+      `Nombre d'entretiens enregistrés : ${candidaturesPackage.metadata.totalInterviews}`,
+      `Profil CV sauvegardé : ${appState?.cvCriteria ? 'Oui' : 'Non'}`,
+      `Recherches et filtres sauvegardés : ${appState?.query ? 'Oui ("' + appState.query + '")' : 'Non'}`,
+      '',
+      'CONTENU DU PACKAGE :',
+      '1. "candidatures_donnees.json" : Vos candidatures, notes et historiques de postulation.',
+      '2. "app_state.json" : Vos critères de CV extraits, requêtes, filtres et interactions sur les offres.',
+      '3. "entretiens.ics" : Votre calendrier synchronisable avec Google Agenda, Outlook, Apple Calendar, etc.',
+      '',
+      'COMMENT RESTAURER VOS DONNÉES ?',
+      'Sur la page d\'accueil de FindTheJob, cliquez sur le bouton "Importer" dans la barre d\'outils et sélectionnez cette archive ZIP (ou directement le fichier .json).',
+      '',
+      'CONFIDENTIALITÉ ET RGPD :',
+      'Toutes ces données sont traitées 100% en local dans votre navigateur. Aucun serveur centralisé ne conserve vos informations personnelles.',
+      '===================================================='
+    ].join('\r\n');
+
+    // Génération ZIP si JSZip présent
+    if (window.JSZip) {
+      try {
+        const zip = new window.JSZip();
+        zip.file('candidatures_donnees.json', candidaturesJson);
+        zip.file('app_state.json', stateJson);
+        zip.file('entretiens.ics', icsContent);
+        zip.file('README.txt', readmeContent);
+
+        const zipBlob = await zip.generateAsync({
+          type: 'blob',
+          compression: 'DEFLATE',
+          compressionOptions: { level: 6 }
+        });
+
+        triggerDownload(zipBlob, filename);
+        return { success: true, format: 'zip', filename, candidaturesCount: cList.length };
+      } catch (zipErr) {
+        console.warn('[ArchiveService] Erreur création archive ZIP complète, repli JSON unifié:', zipErr);
+      }
+    }
+
+    // Repli de secours : JSON unifié complet + ICS
+    const unifiedPackage = {
+      version: '2.0',
+      appName: 'FindTheJob',
+      exportedAt: new Date().toISOString(),
+      candidatures: candidaturesMap,
+      appState: appState || {},
+      metadata: {
+        totalCandidatures: cList.length,
+        totalInterviews: candidaturesPackage.metadata.totalInterviews,
+        ...metadata
+      }
+    };
+    const jsonBlob = new Blob([JSON.stringify(unifiedPackage, null, 2)], { type: 'application/json;charset=utf-8' });
+    triggerDownload(jsonBlob, `findthejob_sauvegarde_${today}.json`);
+
+    if (cList.length > 0) {
+      const icsBlob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' });
+      triggerDownload(icsBlob, `entretiens_${today}.ics`);
+    }
+
+    return { success: true, format: 'json', filename: `findthejob_sauvegarde_${today}.json`, candidaturesCount: cList.length };
+  }
+
   // =================== MOTEUR D'IMPORTATION (ZIP ou JSON) ===================
 
   /**
-   * Analyse et importe un fichier uploadé (supporte .zip ou .json direct)
+   * Assainit un objet récursivement contre la pollution de prototype et les injections XSS
+   */
+  function sanitizeObject(obj, depth = 0) {
+    if (depth > 6 || !obj || typeof obj !== 'object') return obj;
+    if (Array.isArray(obj)) {
+      return obj.map(item => (typeof item === 'string' ? sanitizeString(item) : sanitizeObject(item, depth + 1)));
+    }
+    const clean = {};
+    for (const [key, value] of Object.entries(obj)) {
+      if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+      const cleanKey = sanitizeString(key);
+      if (typeof value === 'string') {
+        clean[cleanKey] = sanitizeString(value);
+      } else if (typeof value === 'object' && value !== null) {
+        clean[cleanKey] = sanitizeObject(value, depth + 1);
+      } else {
+        clean[cleanKey] = value;
+      }
+    }
+    return clean;
+  }
+
+  /**
+   * Analyse et importe un fichier uploadé (supporte .zip ou .json direct, archive candidatures ou sauvegarde globale)
    */
   async function parseImportFile(file) {
     if (!file) throw new Error('Aucun fichier fourni pour l\'importation');
 
     const fileName = file.name.toLowerCase();
     let jsonString = '';
+    let stateJsonString = '';
 
     if (fileName.endsWith('.zip')) {
       if (!window.JSZip) {
@@ -265,20 +401,38 @@
       const arrayBuffer = await file.arrayBuffer();
       const zip = await window.JSZip.loadAsync(arrayBuffer);
 
-      // Recherche du fichier candidatures_donnees.json ou tout fichier .json dans l'archive
-      let jsonFile = zip.file('candidatures_donnees.json');
-      if (!jsonFile) {
-        const matchingFiles = zip.file(/\.json$/i);
+      // 1. Recherche du fichier candidatures
+      let candFile = zip.file('candidatures_donnees.json');
+      if (!candFile) {
+        const matchingFiles = zip.file(/candidature.*\.json$/i);
         if (matchingFiles && matchingFiles.length > 0) {
-          jsonFile = matchingFiles[0];
+          candFile = matchingFiles[0];
         }
       }
 
-      if (!jsonFile) {
-        throw new Error('Aucun fichier de données (candidatures_donnees.json) trouvé dans l\'archive .zip');
+      // 2. Recherche du fichier app_state
+      let stateFile = zip.file('app_state.json');
+      if (!stateFile) {
+        const matchingState = zip.file(/state.*\.json$/i);
+        if (matchingState && matchingState.length > 0) {
+          stateFile = matchingState[0];
+        }
       }
 
-      jsonString = await jsonFile.async('string');
+      // Si aucun fichier spécifique trouvé, recherche du premier .json
+      if (!candFile && !stateFile) {
+        const anyJson = zip.file(/\.json$/i);
+        if (anyJson && anyJson.length > 0) {
+          candFile = anyJson[0];
+        }
+      }
+
+      if (!candFile && !stateFile) {
+        throw new Error('Aucun fichier de données (.json) trouvé dans l\'archive .zip');
+      }
+
+      if (candFile) jsonString = await candFile.async('string');
+      if (stateFile) stateJsonString = await stateFile.async('string');
     } else if (fileName.endsWith('.json')) {
       jsonString = await file.text();
     } else {
@@ -286,82 +440,126 @@
     }
 
     // Parsing JSON & Validation défensive
-    let parsed;
-    try {
-      parsed = JSON.parse(jsonString);
-    } catch (parseErr) {
-      throw new Error('Le fichier de données contient une syntaxe JSON invalide');
+    let parsedCand = null;
+    let parsedState = null;
+
+    if (jsonString) {
+      try {
+        parsedCand = JSON.parse(jsonString);
+      } catch (parseErr) {
+        throw new Error('Le fichier de données contient une syntaxe JSON invalide');
+      }
+    }
+
+    if (stateJsonString) {
+      try {
+        parsedState = JSON.parse(stateJsonString);
+      } catch (parseErr) {
+        console.warn('[ArchiveService] Erreur parsing app_state.json dans le ZIP:', parseErr);
+      }
+    }
+
+    // Détection d'un fichier unifié où appState et candidatures sont dans le même JSON
+    if (parsedCand && !parsedState && parsedCand.appState) {
+      parsedState = parsedCand.appState;
     }
 
     // Récupération des candidatures
     let rawCandidatures = null;
-    if (parsed.candidatures && typeof parsed.candidatures === 'object') {
-      rawCandidatures = parsed.candidatures;
-    } else if (Array.isArray(parsed)) {
-      rawCandidatures = parsed;
-    } else if (parsed && typeof parsed === 'object') {
-      // Cas où le JSON est directement une map { [id]: Candidature }
-      rawCandidatures = parsed;
+    if (parsedCand) {
+      if (parsedCand.candidatures && typeof parsedCand.candidatures === 'object') {
+        rawCandidatures = parsedCand.candidatures;
+      } else if (Array.isArray(parsedCand)) {
+        rawCandidatures = parsedCand;
+      } else if (!parsedCand.appState && typeof parsedCand === 'object' && Object.keys(parsedCand).length > 0) {
+        // Map directe { [id]: Candidature }
+        rawCandidatures = parsedCand;
+      }
     }
 
-    if (!rawCandidatures || Object.keys(rawCandidatures).length === 0) {
-      throw new Error('Aucune candidature valide détectée dans le fichier importé');
-    }
-
-    // Normalisation et assainissement anti-XSS
+    // Normalisation et assainissement anti-XSS des candidatures
     const normalizedMap = {};
-    const list = Array.isArray(rawCandidatures) ? rawCandidatures : Object.values(rawCandidatures);
-
     let interviewCounter = 0;
 
-    list.forEach((cand, idx) => {
-      if (!cand || typeof cand !== 'object') return;
+    if (rawCandidatures) {
+      const list = Array.isArray(rawCandidatures) ? rawCandidatures : Object.values(rawCandidatures);
 
-      const id = String(cand.id || cand.jobId || `cand_import_${idx}_${Date.now()}`);
-      const cleanCand = {
-        id,
-        jobId: String(cand.jobId || id),
-        jobTitle: sanitizeString(cand.jobTitle || 'Poste non spécifié'),
-        company: sanitizeString(cand.company || 'Entreprise non spécifiée'),
-        location: sanitizeString(cand.location || ''),
-        url: sanitizeString(cand.url || ''),
-        source: sanitizeString(cand.source || 'Import'),
-        appliedAt: sanitizeString(cand.appliedAt || new Date().toISOString().split('T')[0]),
-        status: sanitizeString(cand.status || 'En attente de réponse'),
-        statusStep: sanitizeString(cand.statusStep || ''),
-        notes: sanitizeString(cand.notes || ''),
-        interviews: [],
-        createdAt: Number(cand.createdAt) || Date.now(),
-        updatedAt: Number(cand.updatedAt) || Date.now()
-      };
+      list.forEach((cand, idx) => {
+        if (!cand || typeof cand !== 'object') return;
 
-      if (Array.isArray(cand.interviews)) {
-        cand.interviews.forEach((item, iIdx) => {
-          if (!item) return;
-          interviewCounter++;
-          cleanCand.interviews.push({
-            id: String(item.id || `int_${id}_${iIdx}`),
-            title: sanitizeString(item.title || `Entretien ${iIdx + 1}`),
-            date: sanitizeString(item.date || ''),
-            time: sanitizeString(item.time || '09:00'),
-            durationMinutes: Number(item.durationMinutes) || 60,
-            type: sanitizeString(item.type || 'visio'),
-            locationOrLink: sanitizeString(item.locationOrLink || ''),
-            interviewer: sanitizeString(item.interviewer || ''),
-            notes: sanitizeString(item.notes || '')
+        const id = String(cand.id || cand.jobId || `cand_import_${idx}_${Date.now()}`);
+        const cleanCand = {
+          id,
+          jobId: String(cand.jobId || id),
+          jobTitle: sanitizeString(cand.jobTitle || 'Poste non spécifié'),
+          company: sanitizeString(cand.company || 'Entreprise non spécifiée'),
+          location: sanitizeString(cand.location || ''),
+          url: sanitizeString(cand.url || ''),
+          source: sanitizeString(cand.source || 'Import'),
+          appliedAt: sanitizeString(cand.appliedAt || new Date().toISOString().split('T')[0]),
+          status: sanitizeString(cand.status || 'En attente de réponse'),
+          statusStep: sanitizeString(cand.statusStep || ''),
+          notes: sanitizeString(cand.notes || ''),
+          interviews: [],
+          createdAt: Number(cand.createdAt) || Date.now(),
+          updatedAt: Number(cand.updatedAt) || Date.now()
+        };
+
+        if (Array.isArray(cand.interviews)) {
+          cand.interviews.forEach((item, iIdx) => {
+            if (!item) return;
+            interviewCounter++;
+            cleanCand.interviews.push({
+              id: String(item.id || `int_${id}_${iIdx}`),
+              title: sanitizeString(item.title || `Entretien ${iIdx + 1}`),
+              date: sanitizeString(item.date || ''),
+              time: sanitizeString(item.time || '09:00'),
+              durationMinutes: Number(item.durationMinutes) || 60,
+              type: sanitizeString(item.type || 'visio'),
+              locationOrLink: sanitizeString(item.locationOrLink || ''),
+              interviewer: sanitizeString(item.interviewer || ''),
+              notes: sanitizeString(item.notes || '')
+            });
           });
-        });
+        }
+
+        normalizedMap[cleanCand.jobId] = cleanCand;
+      });
+    }
+
+    // Normalisation de l'état applicatif
+    let cleanAppState = null;
+    if (parsedState) {
+      const rawState = parsedState.appState || parsedState;
+      if (typeof rawState === 'object') {
+        cleanAppState = {
+          query: sanitizeString(rawState.query || ''),
+          exclusions: sanitizeString(rawState.exclusions || ''),
+          geoRegion: sanitizeString(rawState.geoRegion || 'all'),
+          cvFileName: sanitizeString(rawState.cvFileName || ''),
+          cvRawText: sanitizeString(rawState.cvRawText || ''),
+          cvCriteria: rawState.cvCriteria ? sanitizeObject(rawState.cvCriteria) : null,
+          cvFeedback: rawState.cvFeedback ? sanitizeObject(rawState.cvFeedback) : null,
+          jobInteractions: rawState.jobInteractions ? sanitizeObject(rawState.jobInteractions) : {},
+          jobs: Array.isArray(rawState.jobs) ? rawState.jobs.map(j => sanitizeObject(j)) : null,
+          parsedCriteria: rawState.parsedCriteria ? sanitizeObject(rawState.parsedCriteria) : null,
+          stats: rawState.stats ? sanitizeObject(rawState.stats) : null,
+          availableSources: rawState.availableSources ? sanitizeObject(rawState.availableSources) : null
+        };
       }
+    }
 
-      normalizedMap[cleanCand.jobId] = cleanCand;
-    });
+    const totalCand = Object.keys(normalizedMap).length;
+    if (totalCand === 0 && !cleanAppState) {
+      throw new Error('Aucune donnée valide (candidature ou profil) détectée dans le fichier importé');
+    }
 
-    const totalCount = Object.keys(normalizedMap).length;
     return {
       success: true,
       candidatures: normalizedMap,
-      candidaturesCount: totalCount,
-      interviewsCount: interviewCounter
+      candidaturesCount: totalCand,
+      interviewsCount: interviewCounter,
+      appState: cleanAppState
     };
   }
 
@@ -370,8 +568,10 @@
   window.archiveService = {
     generateIcs,
     exportZipArchive,
+    exportFullDataArchive,
     parseImportFile,
     formatIcsDateTime,
-    sanitizeString
+    sanitizeString,
+    sanitizeObject
   };
 })();

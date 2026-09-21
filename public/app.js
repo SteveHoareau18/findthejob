@@ -20,6 +20,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const cacheStatusText = document.getElementById('cacheStatusText');
   const saveCacheBtn = document.getElementById('saveCacheBtn');
   const clearCacheBtn = document.getElementById('clearCacheBtn');
+  const exportHeaderBtn = document.getElementById('exportHeaderBtn');
+  const importHeaderBtn = document.getElementById('importHeaderBtn');
+  const importHeaderFileInput = document.getElementById('importHeaderFileInput');
 
   // CV Upload & Criteria Elements
   const cvFileInput = document.getElementById('cvFileInput');
@@ -734,6 +737,177 @@ document.addEventListener('DOMContentLoaded', () => {
         updateCacheBadgeUI({ hasCache: false });
       } catch (err) {
         console.error('Erreur purge cache:', err);
+      }
+    });
+  }
+
+  // =================== EXPORT GLOBAL DES DONNÉES (EN-TÊTE) ===================
+  if (exportHeaderBtn) {
+    exportHeaderBtn.addEventListener('click', async () => {
+      if (!window.archiveService) {
+        showToastNotification("Le service d'exportation n'est pas encore initialisé.", false);
+        return;
+      }
+
+      const originalHtml = exportHeaderBtn.innerHTML;
+      exportHeaderBtn.disabled = true;
+      exportHeaderBtn.innerHTML = '<span class="animate-spin inline-block">⏳</span><span>Exportation...</span>';
+
+      try {
+        const query = queryInput?.value.trim() || '';
+        const exclusions = exclusionsInput?.value.trim() || '';
+        const geoRegion = document.querySelector('input[name="geoRegion"]:checked')?.value || 'all';
+
+        const appState = {
+          query,
+          exclusions,
+          geoRegion,
+          cvCriteria: currentCvCriteria,
+          cvFileName: currentCvFileName,
+          cvRawText: currentCvRawText,
+          cvFeedback: currentCvFeedback,
+          jobInteractions,
+          jobs: currentJobs,
+          parsedCriteria: lastSearchData.parsedCriteria,
+          stats: lastSearchData.stats,
+          availableSources: lastSearchData.availableSources
+        };
+
+        const res = await window.archiveService.exportFullDataArchive({
+          candidatures,
+          appState
+        });
+
+        showToastNotification(`📦 Sauvegarde téléchargée (${res.candidaturesCount} candidatures + données de recherche) !`);
+      } catch (err) {
+        console.error('Erreur export global:', err);
+        showToastNotification(`Erreur lors de l'export : ${err.message}`, false);
+      } finally {
+        exportHeaderBtn.disabled = false;
+        exportHeaderBtn.innerHTML = originalHtml;
+      }
+    });
+  }
+
+  // =================== IMPORT GLOBAL DES DONNÉES (EN-TÊTE) ===================
+  if (importHeaderBtn && importHeaderFileInput) {
+    importHeaderBtn.addEventListener('click', () => {
+      importHeaderFileInput.click();
+    });
+
+    importHeaderFileInput.addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      if (!window.archiveService) {
+        showToastNotification("Le service d'importation n'est pas disponible.", false);
+        return;
+      }
+
+      importHeaderBtn.disabled = true;
+      const originalHtml = importHeaderBtn.innerHTML;
+      importHeaderBtn.innerHTML = '<span class="animate-spin inline-block">⏳</span><span>Restauration...</span>';
+
+      try {
+        const result = await window.archiveService.parseImportFile(file);
+
+        if (result.success) {
+          let countCands = 0;
+          let countInterviews = result.interviewsCount || 0;
+
+          // 1. Restauration des candidatures
+          if (result.candidatures && Object.keys(result.candidatures).length > 0) {
+            if (window.storageManager) {
+              candidatures = window.storageManager.saveAllCandidatures(result.candidatures, true);
+            } else {
+              candidatures = { ...candidatures, ...result.candidatures };
+            }
+            countCands = Object.keys(result.candidatures).length;
+            updateCandidaturesBadgeUI();
+            updateCandidatureFilterBadges();
+            applyAllFiltersAndSort();
+            renderCandidaturesList();
+            if (currentCandViewTab === 'calendar') renderCalendarView();
+          }
+
+          // 2. Restauration de l'état applicatif
+          if (result.appState) {
+            const state = result.appState;
+
+            if (state.query && queryInput) queryInput.value = state.query;
+            if (state.exclusions && exclusionsInput) exclusionsInput.value = state.exclusions;
+            if (state.geoRegion) {
+              const radio = document.querySelector(`input[name="geoRegion"][value="${state.geoRegion}"]`);
+              if (radio) radio.checked = true;
+            }
+
+            if (state.cvCriteria) {
+              currentCvCriteria = state.cvCriteria;
+              currentCvFileName = state.cvFileName || 'CV importé';
+              currentCvRawText = state.cvRawText || '';
+              updateCvQuickSummary(currentCvCriteria, currentCvFileName);
+            }
+
+            if (state.cvFeedback) {
+              currentCvFeedback = state.cvFeedback;
+              renderCvFeedback(currentCvFeedback);
+            }
+
+            if (state.jobInteractions) {
+              jobInteractions = { ...jobInteractions, ...state.jobInteractions };
+              updateUserStatusFilterBadges();
+            }
+
+            if (state.jobs && Array.isArray(state.jobs) && state.jobs.length > 0) {
+              currentJobs = state.jobs;
+              lastSearchData = {
+                parsedCriteria: state.parsedCriteria || null,
+                stats: state.stats || null,
+                availableSources: state.availableSources || null
+              };
+              displayResults({
+                jobs: currentJobs,
+                parsedCriteria: lastSearchData.parsedCriteria,
+                stats: lastSearchData.stats,
+                availableSources: lastSearchData.availableSources
+              }, true);
+            }
+
+            // Enregistrement de l'état dans la persistance locale
+            if (window.storageManager) {
+              await window.storageManager.saveState({
+                query: queryInput?.value || '',
+                exclusions: exclusionsInput?.value || '',
+                geoRegion: document.querySelector('input[name="geoRegion"]:checked')?.value || 'all',
+                cvCriteria: currentCvCriteria,
+                cvFileName: currentCvFileName,
+                cvRawText: currentCvRawText,
+                cvFeedback: currentCvFeedback,
+                jobs: currentJobs,
+                jobInteractions,
+                parsedCriteria: lastSearchData.parsedCriteria,
+                stats: lastSearchData.stats,
+                availableSources: lastSearchData.availableSources,
+                ttlDays: 7
+              });
+              const refreshed = await window.storageManager.loadState();
+              updateCacheBadgeUI(refreshed);
+            }
+          }
+
+          let msg = '📥 Données importées avec succès !';
+          if (countCands > 0) {
+            msg = `📥 ${countCands} candidatures et ${countInterviews} entretiens importés avec succès !`;
+          }
+          showToastNotification(msg);
+        }
+      } catch (err) {
+        console.error('Erreur import global:', err);
+        showToastNotification(`Échec de l'importation : ${err.message}`, false);
+      } finally {
+        importHeaderFileInput.value = '';
+        importHeaderBtn.disabled = false;
+        importHeaderBtn.innerHTML = originalHtml;
       }
     });
   }
