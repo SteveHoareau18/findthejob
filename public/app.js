@@ -2676,6 +2676,9 @@ Pas de PHP ni de WordPress`;
   const chatInput = document.getElementById('chatInput');
   const chatSendBtn = document.getElementById('chatSendBtn');
 
+  // Commutateur de fonctionnalité ChatBot Live (Désactivé sans suppression de code)
+  const CHATBOT_LIVE_ENABLED = false;
+
   let currentModalTab = 'summary'; // 'summary' | 'argumentaire' | 'chat'
   let chatWs = null;
   let chatMessagesHistory = [];
@@ -2757,11 +2760,13 @@ Pas de PHP ni de WordPress`;
     if (targetTab === 'argumentaire') {
       ensureArgumentaireLoaded(currentAnalysisJob);
     } else if (targetTab === 'chat') {
-      ensureChatInitialized(currentAnalysisJob);
-      setTimeout(() => {
-        chatInput?.focus();
-        scrollChatToBottom();
-      }, 50);
+      if (CHATBOT_LIVE_ENABLED) {
+        ensureChatInitialized(currentAnalysisJob);
+        setTimeout(() => {
+          chatInput?.focus();
+          scrollChatToBottom();
+        }, 50);
+      }
     }
   }
 
@@ -3314,6 +3319,11 @@ Pas de PHP ni de WordPress`;
   }
 
   function initChatWebSocket() {
+    if (!CHATBOT_LIVE_ENABLED) {
+      updateChatWsStatus(false, 'Service en pause (Maintenance flux temps réel)');
+      return;
+    }
+
     // Si nous sommes hébergés sur Vercel, les WebSockets Node.js ne sont pas supportés par l'infra serverless :
     // nous utilisons directement le transport HTTP SSE sans générer d'erreurs en console.
     if (isVercelEnvironment()) {
@@ -3372,6 +3382,7 @@ Pas de PHP ni de WordPress`;
   }
 
   function ensureChatInitialized(job) {
+    if (!CHATBOT_LIVE_ENABLED) return;
     initChatWebSocket();
     if (chatMessagesHistory.length === 0) {
       resetChatToWelcome(job);
@@ -3657,6 +3668,7 @@ Pas de PHP ni de WordPress`;
   }
 
   function sendChatMessage(text) {
+    if (!CHATBOT_LIVE_ENABLED) return;
     if (!text || !text.trim() || isStreamingChat) return;
     const cleanText = text.trim();
 
